@@ -30,7 +30,7 @@ scores whether the agent catches them.
 ```
 
 Coming next (roadmap below): RAG methodology layer, LLM launch-memo agent,
-full eval harness.
+LLM-judge for memo quality.
 
 ## Quickstart
 
@@ -88,14 +88,50 @@ Then ask Claude things like:
 | `novelty_trap` | +33% early, decays to ~null | inconclusive |
 | `variance_trap` | +6% lift but outlier-inflated metric | inconclusive |
 
+## The platform eval harness
+
+`scripts/run_eval.py` grades the reviewer against the *platform* generator's
+trap scenarios (`synthetic_data/generator.py`) — five platform profiles
+(Facebook, Instagram, TikTok, Reddit, LinkedIn) × three metric families
+(flagship, ads, trust & safety), each with a hidden `experiment.json` answer
+key the reviewer never sees:
+
+```bash
+.venv/bin/python scripts/run_eval.py --platform tiktok --n-users 20000 --days 14
+```
+
+For each scenario the harness aggregates daily rows to per-user outcomes,
+runs the checklist (SRM → guardrail veto → peeking/novelty/variance flags →
+verdict), and grades the verdict plus per-trap detection against the answer
+key. Datasets cache under `eval_data/` (gitignored); results land in
+`eval_data/<platform>_results_s<seed>.json`.
+
+| Scenario | Injected trap | Correct verdict |
+|---|---|---|
+| `clean_win` | none (+4–6% real lift) | launch |
+| `srm` | 55/45 allocation skew | invalid |
+| `novelty_decay` | lift fades exp(−day/5) | inconclusive |
+| `guardrail_violation` | engagement up, reports up 35% | don't launch |
+| `whale_variance` | 8 users at 40× activity | inconclusive |
+| `null_result` | none (noise) | don't launch |
+
+Two calibration notes baked into `src/experiment_copilot/eval.py`: the
+variance check leans on the treatment/control std ratio (50%+ inflation
+flags) rather than the 5-SD share rule, because healthy lognormal engagement
+tails trip the share rule on their own; and the guardrail veto requires both
+statistical (p < 0.01, paired daily t-test on reports) and practical (>10%
+lift) significance, so rare-event noise can't veto a clean launch.
+
 ## Roadmap
 
 - [x] **Week 1** — synthetic data generator + stats engine + MCP tools *(this repo)*
+- [x] **Week 3 (eval harness)** — trap scenarios × answer keys, deterministic
+      grader (`src/experiment_copilot/eval.py` + `scripts/run_eval.py`); 6/6 on
+      TikTok and Reddit profiles. Still open: LLM-judge for memo quality.
 - [ ] **Week 2** — RAG corpus: 15–25 short methodology docs (SRM, peeking,
       CUPED, guardrails, launch frameworks), written in your own words with
       citations; local embeddings via sentence-transformers + FAISS
-- [ ] **Week 3** — memo agent (LLM turns a review into a launch memo) +
-      eval harness: trap scenarios × rubric scoring, LLM-judge for memo quality
+- [ ] **Week 3 (memo agent)** — LLM turns a review into a launch memo
 - [ ] **Week 4** — README polish, architecture diagram, 2-min demo video,
       LinkedIn post: *"I built an AI that reviews A/B tests — then I built the
       test suite that grades the AI."*
