@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "experiment-copilot"
+version = "0.1.0"
+description = "An MCP server that reviews A/B tests like a product data scientist — with an eval harness that grades it on planted traps."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pandas>=2.1",
+    "fastmcp>=2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
