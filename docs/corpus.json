@@ -1,0 +1,352 @@
+{"notes": [
+  {
+    "id": "srm",
+    "title": "Sample Ratio Mismatch (SRM)",
+    "summary": "Sample Ratio Mismatch means the observed split between control and treatment differs significantly from the designed allocation (for example 48/52 instead of 50/50). It is detected with a chi-square goodness-of-fit test on the arm counts. SRM does not bias the point estimate by itself, but it is a smoke alarm: it signals something broken upstream — sticky bucketing bugs, bot traffic filtered unevenly, triggered-analysis joins dropping users asymmetrically, or an overlapping launch interfering with assignment. Rule of thumb: any SRM with p < 0.001 deserves investigation before reading any metric. A single SRM check at 50/50 has a 0.1% false-positive rate, so repeated SRM hits across many segments usually mean a real bug, not bad luck.",
+    "key_points": [
+      "Detect with a chi-square goodness-of-fit test of observed arm counts against the designed ratio",
+      "SRM is a smoke alarm, not a bias per se — it signals broken randomization machinery upstream",
+      "Common root causes, in rough likelihood order: bucketing/assignment bugs, bot traffic, triggered-analysis joins, overlapping launches",
+      "Investigate at p < 0.001 before reading any metric; do not ship on an SRM-positive readout"
+    ],
+    "interview_angle": "The classic 'you see 51/49, what do you do?' Interviewers want: run the chi-square test, refuse to read metrics until it is resolved, and enumerate root causes in likelihood order. Bonus: explain why SRM invalidates the readout even though the point estimate looks fine.",
+    "citations": [
+      "Fabijan, A. et al. (2019). Diagnosing Sample Ratio Mismatch in Online Controlled Experiments: A Taxonomy and Rules of Thumb for Practitioners. KDD.",
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press, Ch. 3."
+    ],
+    "related_scenarios": ["srm_trap"],
+    "keywords": ["sample ratio mismatch", "srm", "chi-square", "chi square", "randomization", "allocation", "bucketing", "split", "arm counts", "designed ratio", "design", "experiment design"]
+  },
+  {
+    "id": "peeking",
+    "title": "Peeking and sequential testing",
+    "summary": "Peeking means checking results repeatedly and stopping the moment p < 0.05. Under the null, a fixed-horizon test rejects 5% of the time; peek 10 times and the real false-positive rate climbs toward 15-20%. A p-value is only valid for a pre-committed sample size and analysis plan. Fixes: pre-commit the runtime via power analysis, use sequential methods such as always-valid p-values / confidence sequences, or apply alpha-spending corrections. In practice the cheapest defense is process: agree the runtime and the decision rule before launch, and treat interim looks as diagnostic, never decisive.",
+    "key_points": [
+      "Repeated interim testing inflates the Type I error rate well above the nominal alpha",
+      "p-values assume a fixed horizon and a pre-committed analysis; peeking voids the guarantee",
+      "Remedies: pre-committed runtime, sequential methods (always-valid inference), alpha spending",
+      "Process fix: agree runtime and decision rule before launch; interim looks are diagnostic only"
+    ],
+    "interview_angle": "The canonical 'why not stop when it first goes significant?' They want the Type I inflation mechanism stated quantitatively, plus the process fix (pre-committed runtime). Mentioning always-valid p-values signals senior-level depth.",
+    "citations": [
+      "Johari, R., Pekelis, L., Walsh, D. (2017). Always Valid Inference: Bringing Sequential Analysis to A/B Testing. arXiv:1512.04922.",
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press."
+    ],
+    "related_scenarios": ["peeking_trap"],
+    "keywords": ["peeking", "peeker", "mirage", "sequential testing", "interim analysis", "always-valid", "alpha spending", "early stopping", "early enrollees", "p-value", "stop when significant", "repeated testing"]
+  },
+  {
+    "id": "novelty",
+    "title": "Novelty and primacy effects",
+    "summary": "Novelty effects: users react to change itself, not the feature — clicking a new button because it is new. Primacy is the mirror image for altered or removed familiar elements. Both decay over days to weeks, so short experiments overstate the effect. Diagnosis: split results by enrollment cohort or by days since exposure; a treatment effect concentrated in early cohorts that fades with tenure is novelty, not product value. Remedy: run long enough for the effect to stabilize, or model the decay explicitly. For launch decisions, the steady-state effect is what matters, not the week-one spike.",
+    "key_points": [
+      "Novelty is a reaction to change itself; primacy is its mirror image for altered familiar elements",
+      "Effects decay over days to weeks, so short experiments overstate them",
+      "Diagnose with enrollment-cohort or days-since-exposure splits; fading early-cohort effects spell novelty",
+      "Launch on the steady-state effect: run longer or model the decay"
+    ],
+    "interview_angle": "'Treatment wins in week 1 but fades by week 3 — ship it?' They want: novelty vs real effect distinguished by cohort splits, and the discipline not to ship a week-one spike.",
+    "citations": [
+      "Hohnhold, H., O'Brien, D., Tang, D. (2015). Focusing on the Long-term: It's Good for Users and Business. KDD.",
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press."
+    ],
+    "related_scenarios": ["novelty_decay_trap"],
+    "keywords": ["novelty", "primacy", "novelty effect", "decay", "cohort", "early adopters", "steady state", "days since exposure", "fades"]
+  },
+  {
+    "id": "variance",
+    "title": "Variance health and outliers (whales)",
+    "summary": "A handful of extreme users ('whales') can dominate a mean: revenue per user is typically heavy-tailed, so a few $500+ purchasers can manufacture a 'significant' lift that vanishes if they are removed. Diagnosis: compare means against medians, check the standard-deviation ratio between arms (a ratio above ~2 alongside a headline lift is a red flag), and run winsorized or trimmed means as a sensitivity check. CUPED and other variance-reduction methods do not fix whale problems — they assume well-behaved residuals. The honest answer is often 'inconclusive': the experiment cannot distinguish a real lift from whale luck at this sample size.",
+    "key_points": [
+      "Heavy-tailed metrics let a few extreme users manufacture a significant-looking mean lift",
+      "Diagnose with median vs mean, the between-arm std-deviation ratio (above ~2 is a red flag), and winsorized sensitivity checks",
+      "CUPED does not fix whale-dominated metrics; it assumes well-behaved residuals",
+      "The honest verdict is often inconclusive rather than a false win"
+    ],
+    "interview_angle": "'Revenue is up 30%, p < 0.01 — ship?' They want you to distrust it on sight: check the tail, the std ratio, and medians before celebrating. Saying 'inconclusive' when appropriate signals judgment.",
+    "citations": [
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press (variance and metric sensitivity).",
+      "Deng, A., Hu, Y., Lu, Y., Litz, D. (2013). Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data. WSDM (limits of regression adjustment on heavy tails)."
+    ],
+    "related_scenarios": ["whale_variance_trap"],
+    "keywords": ["whale", "outlier", "variance", "heavy-tailed", "heavy tailed", "winsorize", "median", "std ratio", "standard deviation ratio", "sensitivity", "extreme users"]
+  },
+  {
+    "id": "cuped",
+    "title": "CUPED and variance reduction",
+    "summary": "CUPED (Controlled-experiment Using Pre-Experiment Data) regresses the experiment metric on pre-period covariates — typically the same metric measured before randomization — and analyzes the residuals instead of the raw metric. Because pre-period behavior predicts in-period behavior (R-squared around 0.5 is common for engagement), it cuts variance roughly in half, which is equivalent to doubling the sample size. Requirements: covariates must be measured before treatment assignment, otherwise post-treatment bias creeps in, and the treatment must not change the covariate-outcome relationship. It fails on whale-dominated metrics (heavy tails break the regression) and on brand-new users with no pre-period.",
+    "key_points": [
+      "Regress the metric on pre-experiment covariates and analyze the residuals",
+      "Typical ~50% variance reduction is equivalent to doubling the sample size",
+      "Covariates must be pre-treatment; never condition on anything the treatment could affect",
+      "Breaks on heavy-tailed metrics and on new users without pre-period data"
+    ],
+    "interview_angle": "'How do you make experiments more sensitive without more traffic?' CUPED is the expected answer, with the pre-treatment caveat stated unprompted. Know the ~50% variance-reduction rule of thumb.",
+    "citations": [
+      "Deng, A., Hu, Y., Lu, Y., Litz, D. (2013). Improving the Sensitivity of Online Controlled Experiments by Utilizing Pre-Experiment Data. WSDM."
+    ],
+    "related_scenarios": ["clean_win", "whale_variance_trap"],
+    "keywords": ["cuped", "variance reduction", "pre-period", "pre period", "covariate", "regression adjustment", "sensitivity", "pre-experiment data", "residuals"]
+  },
+  {
+    "id": "guardrails",
+    "title": "Guardrail metrics and launch vetoes",
+    "summary": "Guardrail metrics are the 'do no harm' constraints on a launch: trust and safety reports, retention, latency, revenue cannibalization. The launch rule is conjunctive — the primary metric must win AND no guardrail may regress beyond its veto threshold. Guardrails are usually rare events (report rates near 0.1%), so they need far larger samples than the primary metric to be powered; an underpowered guardrail that 'looks fine' is not evidence of safety. Pre-commit veto thresholds (for example, 'block launch if reports rise more than 10% with p < 0.01') before the experiment reads out, or every launch review becomes a negotiation.",
+    "key_points": [
+      "Launch rule is conjunctive: primary wins AND no guardrail regresses past its veto threshold",
+      "Rare-event guardrails need much larger samples than the primary metric; 'looks fine' underpowered is not evidence of safety",
+      "Pre-commit veto thresholds before readout to avoid negotiation at decision time",
+      "A guardrail veto means do not launch, even with a significant primary win"
+    ],
+    "interview_angle": "'Primary wins but reports are up 25%, p = 0.2 — ship?' They want the veto: underpowered guardrail movement still blocks launch when thresholds were pre-committed. This tests judgment over statistical cleverness.",
+    "citations": [
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press (guardrail metrics)."
+    ],
+    "related_scenarios": ["guardrail_violation_trap"],
+    "keywords": ["guardrail", "veto", "do no harm", "trust and safety", "reports", "rare events", "launch decision", "primary metric", "constraints", "launch veto", "design", "experiment design"]
+  },
+  {
+    "id": "triggering",
+    "title": "Triggering: ITT vs CACE and dilution",
+    "summary": "Many treatments only affect users who trigger them — they see the feature, hit the paywall, open the surface. The intent-to-treat (ITT) effect averages over everyone randomized, so with a 30% trigger rate a true +2% effect on triggerers shows up as roughly +0.6% overall: diluted, often insignificant. The conditional average treatment effect (CACE) — the effect on triggerers, estimated by analyzing triggered users directly — restores power but changes the estimand. Report both: ITT for the business impact of launching, CACE for the product judgment of whether the feature works. And never trust a triggered comparison without checking trigger balance first.",
+    "key_points": [
+      "ITT averages over all randomized users, so low trigger rates dilute the true effect (ITT is roughly trigger-rate times CACE)",
+      "CACE, estimated on triggered users directly, restores power for the 'does the feature work' question",
+      "Report both: ITT for launch business impact, CACE for product judgment",
+      "Always check trigger balance across arms before trusting a triggered estimate"
+    ],
+    "interview_angle": "'Only 20% of users ever saw the feature and the result is null — now what?' They want the ITT vs CACE distinction and the dilution arithmetic, not a bigger sample.",
+    "citations": [
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press (triggered analysis)."
+    ],
+    "related_scenarios": ["dilution_trap", "triggered_clean_win"],
+    "keywords": ["triggering", "trigger rate", "ITT", "intent-to-treat", "intent to treat", "CACE", "dilution", "diluted", "conditional average treatment effect", "triggered analysis", "triggered users"]
+  },
+  {
+    "id": "trigger_imbalance",
+    "title": "Trigger imbalance and selection bias",
+    "summary": "If the trigger itself is affected by treatment — or if the triggered-analysis join drops users asymmetrically — the triggered subset is no longer randomized: it is a self-selected sample, and the naive triggered comparison is biased, sometimes badly enough to flip the sign of the estimate. The balance check (an SRM-style test on trigger rates by arm) is the gate: if trigger rates differ significantly, do not trust the triggered estimate. CUPED can partially debias selection on observables, but the honest verdict is inconclusive — you cannot recover the causal effect from a broken randomization without strong assumptions.",
+    "key_points": [
+      "Treatment-affected triggers (or asymmetric joins) turn the triggered subset into a self-selected sample",
+      "The balance check on trigger rates by arm is the gate; a failed check invalidates the naive estimate",
+      "Selection bias can flip the sign of the estimated effect",
+      "CUPED only partially debiases selection on observables; the honest verdict is inconclusive"
+    ],
+    "interview_angle": "'Triggered users show a win but trigger rates differ by arm — trust it?' They want an immediate no, the selection-bias mechanism, and the balance check named as the diagnostic you run first.",
+    "citations": [
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press (triggered analysis and selection bias)."
+    ],
+    "related_scenarios": ["trigger_imbalance_trap"],
+    "keywords": ["trigger imbalance", "selection bias", "balance check", "self-selection", "triggered", "sign flip", "trigger rates differ", "asymmetric"]
+  },
+  {
+    "id": "overlap",
+    "title": "Overlapping experiments and interactions",
+    "summary": "In a mature experimentation program users sit in many experiments at once. If two experiments interact — both change the checkout flow, for example — the measured effect of each is contaminated by the other. Diagnosis: test the interaction term (exposure to experiment B crossed with treatment in A); a significant interaction means the effects do not add up and neither readout stands alone. Mitigation: mutual exclusion for conflicting tests, or factorial and stratified designs when the interaction itself is the question. As a rule, assume overlap exists and check; 'no other experiments were running' is a claim that needs evidence, not an assumption.",
+    "key_points": [
+      "Concurrent experiments can interact, contaminating each readout",
+      "Test the interaction term explicitly; a significant interaction means effects are not additive",
+      "Mitigate with mutual exclusion for conflicting tests or factorial designs when interaction is of interest",
+      "'No overlap' needs evidence — check the experiment calendar and exposure logs"
+    ],
+    "interview_angle": "'Two teams ran checkout tests the same week — can you trust either readout?' They want interaction testing proposed concretely, not hand-waving about randomization washing it out.",
+    "citations": [
+      "Kohavi, R. et al. (2013). Online Controlled Experiments at Large Scale: The A/B Testing Revolution at Booking.com. KDD (overlapping experiment infrastructure).",
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press."
+    ],
+    "related_scenarios": ["overlap_trap"],
+    "keywords": ["overlapping experiments", "overlap", "interaction", "mutual exclusion", "factorial", "concurrent tests", "contamination", "interaction term"]
+  },
+  {
+    "id": "hte",
+    "title": "Heterogeneous treatment effects and multiple testing",
+    "summary": "Cutting results by 20 segments and celebrating the significant ones is multiple testing: at alpha = 0.05 you expect about one false positive per 20 cuts. The Benjamini-Hochberg FDR procedure controls the false discovery rate and is the standard first line of defense; pre-registered segments with a clear hypothesis deserve more trust than data-mined ones. Genuine heterogeneity — a segment that survives FDR with a plausible mechanism — is valuable: it tells you who the feature is for. The discipline: decide segments before readout, correct for multiplicity, and demand a story, not just a p-value.",
+    "key_points": [
+      "20 segment cuts at alpha = 0.05 yield roughly one false positive by chance alone",
+      "Benjamini-Hochberg FDR control is the standard correction for exploratory segment analysis",
+      "Pre-register segments and hypotheses before readout; data-mined segments get less trust",
+      "Real HTE needs both FDR survival and a plausible mechanism"
+    ],
+    "interview_angle": "'One segment is significant — ship to them?' They want the multiple-testing correction before any celebration, then a mechanism. This separates analysts who pattern-match from those who reason.",
+    "citations": [
+      "Benjamini, Y., Hochberg, Y. (1995). Controlling the False Discovery Rate: A Practical and Powerful Approach to Multiple Testing. JRSS-B."
+    ],
+    "related_scenarios": ["hte_mirage_trap", "hte_real"],
+    "keywords": ["heterogeneous treatment effects", "HTE", "multiple testing", "FDR", "false discovery rate", "Benjamini-Hochberg", "segments", "subgroup", "segment analysis"]
+  },
+  {
+    "id": "interference",
+    "title": "Interference and SUTVA violations",
+    "summary": "SUTVA — the stable unit treatment value assumption — says one user's treatment does not affect another user's outcomes. Social products, marketplaces, and shared resources violate it routinely: treated users invite control users, drivers serve both arms, viewers share the same feed inventory. Naive estimates then mix direct effects with spillover. Diagnosis: compare cluster-robust standard errors against naive standard errors — a large ratio signals dependence between units. Design fixes: cluster randomization (randomize communities or markets, not users) and graph-cluster methods. Analysis is harder than design: if you suspect interference, say so and bound it rather than reporting a contaminated point estimate.",
+    "key_points": [
+      "SUTVA requires no spillover between units; social and marketplace products violate it structurally",
+      "Cluster-robust vs naive standard errors diagnose dependence between units",
+      "Design fix: cluster randomization and graph-cluster methods",
+      "When interference is suspected, bound the effect and disclose it rather than reporting a contaminated estimate"
+    ],
+    "interview_angle": "'Your social feature lets treated users invite controls — is the readout valid?' They want SUTVA named explicitly and cluster randomization proposed, with honesty about what cannot be salvaged analytically.",
+    "citations": [
+      "Ugander, J., Karrer, B., Backstrom, L., Kleinberg, J. (2013). Graph Cluster Randomization: Network Exposure to Multiple Universes from Single Experiment. KDD.",
+      "Eckles, D., Karrer, B., Ugander, J. (2017). Design and Analysis of Experiments in Networks: Reducing Bias from Interference. JCGS."
+    ],
+    "related_scenarios": ["interference_sketch"],
+    "keywords": ["interference", "SUTVA", "spillover", "network effects", "cluster randomization", "clustered standard errors", "stable unit treatment value"]
+  },
+  {
+    "id": "power",
+    "title": "Power, MDE, and sample size",
+    "summary": "Power is the probability of detecting a real effect of a given size; the minimum detectable effect (MDE) is the smallest lift you can reliably see at your traffic. Required sample size scales with variance divided by squared MDE — halving the MDE quadruples the sample you need. Practical consequences: choose the MDE from business relevance (1-2% for mature products, not 5%), run the power calculation before launch, and never 'extend a week to get significance' without a sequential plan. An insignificant result with a wide confidence interval means 'we don't know,' not 'no effect' — the confidence interval tells you which effect sizes are still consistent with the data.",
+    "key_points": [
+      "Sample size scales as variance over MDE squared: halving MDE quadruples required n",
+      "Choose MDE from business relevance (1-2% for mature products), not from wishful thinking",
+      "Power the experiment before launch; pre-commit the runtime",
+      "A wide confidence interval around a null result means 'we don't know' — read the interval, not just the p-value"
+    ],
+    "interview_angle": "'How long should this run?' They want a power calculation walked through out loud: MDE choice, variance assumption, and the discipline not to extend on a whim. The 1-2% MDE realism check matters.",
+    "citations": [
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press (power and sample size).",
+      "Cohen, J. (1988). Statistical Power Analysis for the Behavioral Sciences. (standard reference)"
+    ],
+    "related_scenarios": ["clean_win", "null_result"],
+    "keywords": ["power", "MDE", "minimum detectable effect", "sample size", "confidence interval", "type II error", "how long", "runtime", "underpowered", "design", "experiment design"]
+  },
+  {
+    "id": "ratio_metrics",
+    "title": "Ratio metrics and their uncertainty",
+    "summary": "Ratio metrics (revenue per user, orders per session) have trickier uncertainty than simple means: numerator and denominator both vary, and user-level ratios are undefined for zero-denominator users. The delta method gives asymptotically valid standard errors; in practice most teams bootstrap or use the standard linearization. Watch for two traps: denominator shifts (treatment changes who is active, moving the ratio without moving the numerator) and heavy-tailed numerators (see whales). When the denominator itself is affected by treatment, analyze the numerator and denominator separately alongside the ratio.",
+    "key_points": [
+      "Use the delta method or bootstrap for standard errors of ratios; naive per-user averaging mishandles zero denominators",
+      "Denominator shifts can move a ratio spuriously even when the numerator is unchanged",
+      "When treatment affects the denominator, analyze numerator and denominator separately too",
+      "Heavy-tailed numerators bring all the whale problems with them"
+    ],
+    "interview_angle": "'Orders per active user is up — but active users also changed. Problem?' They want the denominator-shift critique and the fix (decompose into components).",
+    "citations": [
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press (ratio metrics)."
+    ],
+    "related_scenarios": [],
+    "keywords": ["ratio metrics", "delta method", "bootstrap", "orders per user", "revenue per user", "denominator", "uncertainty", "per session", "per active"]
+  },
+  {
+    "id": "cluster",
+    "title": "Cluster randomization",
+    "summary": "When users interact — same market, same community, shared supply — randomizing individuals contaminates the arms. Cluster randomization assigns whole groups (cities, schools, subgraphs) instead, keeping interference inside the cluster. The cost: effective sample size is the number of clusters, not users — with 20 markets you have roughly 20 independent observations no matter how many users sit inside them, so power collapses unless clusters are numerous or large. Analyze with cluster-robust standard errors. The design question is always the level of randomization: randomize at the finest grain where SUTVA plausibly holds.",
+    "key_points": [
+      "Randomize groups, not individuals, when units interact within groups",
+      "Effective sample size is the number of clusters — power depends on cluster count",
+      "Analyze with cluster-robust standard errors",
+      "Choose the finest randomization grain where SUTVA plausibly holds"
+    ],
+    "interview_angle": "'Marketplace experiment with driver spillover across arms — design it.' They want cluster randomization with the power caveat stated, not as a free lunch.",
+    "citations": [
+      "Ugander, J., Karrer, B., Backstrom, L., Kleinberg, J. (2013). Graph Cluster Randomization. KDD."
+    ],
+    "related_scenarios": ["interference_sketch"],
+    "keywords": ["cluster randomization", "geographic experiments", "markets", "effective sample size", "cluster-robust", "randomize groups", "cities"]
+  },
+  {
+    "id": "did",
+    "title": "Difference-in-differences (DiD)",
+    "summary": "Difference-in-differences estimates a causal effect when treatment rolls out to some units (markets, regions) but not others: compare the change in treated units to the change in control units over the same window. The identifying assumption is parallel trends — treated units would have evolved like controls absent treatment. Check it with pre-period trends: placebo tests run on pre-period data should show no effect. Threats include compositional change (different users over time), spillover between units, and staggered rollouts (modern estimators handle staggered timing better than classic two-way fixed effects). DiD is the workhorse for launches that cannot be user-randomized.",
+    "key_points": [
+      "Estimator: (treated_after minus treated_before) minus (control_after minus control_before)",
+      "Identifying assumption is parallel trends; validate with pre-period placebo tests",
+      "Threats: compositional change, spillover between units, staggered rollout timing",
+      "The standard design when randomization is infeasible but a control group exists"
+    ],
+    "interview_angle": "'Feature launched in 5 markets only — measure the impact.' They want DiD plus the parallel-trends defense unprompted. Sketching the 2x2 table signals fluency.",
+    "citations": [
+      "Card, D., Krueger, A. (1994). Minimum Wages and Employment: A Case Study of the Fast-Food Industry in New Jersey and Pennsylvania. AER.",
+      "Angrist, J., Pischke, J.-S. (2009). Mostly Harmless Econometrics. Princeton University Press."
+    ],
+    "related_scenarios": [],
+    "keywords": ["difference-in-differences", "DiD", "parallel trends", "market launch", "staggered rollout", "placebo test", "two-way fixed effects", "control group"]
+  },
+  {
+    "id": "matching",
+    "title": "Matching and selection bias",
+    "summary": "'Subscribers order more' is selection, not causation: subscribers were already heavy users before subscribing. Matching — including propensity-score matching — constructs a comparison group with similar observed characteristics, comparing adopters against non-adopters who looked the same pre-adoption. The identifying assumption is selection on observables: no unmeasured confounders. Always show balance tables proving the groups actually look similar after matching, and be honest that matching cannot fix selection on unobservables — that is what experiments and discontinuities are for.",
+    "key_points": [
+      "Correlation between adoption and outcomes is usually selection, not causation",
+      "Match on pre-treatment observables (propensity scores are the classic tool)",
+      "Show balance tables; if observables don't balance, the comparison is not credible",
+      "Matching cannot fix selection on unobservables — state this limit plainly"
+    ],
+    "interview_angle": "'DashPass subscribers order more — does DashPass cause higher ordering?' They want selection bias named immediately, matching proposed with balance tables, and the unobservables caveat. This is a judgment question as much as a methods one.",
+    "citations": [
+      "Rosenbaum, P., Rubin, D. (1983). The Central Role of the Propensity Score in Observational Studies for Causal Effects. Biometrika."
+    ],
+    "related_scenarios": [],
+    "keywords": ["matching", "propensity score", "selection bias", "observables", "balance table", "adopters", "subscribers", "confounding", "correlation"]
+  },
+  {
+    "id": "rdd",
+    "title": "Regression discontinuity designs (RDD)",
+    "summary": "When treatment is assigned by a threshold — a score cutoff, an eligibility rule — units just above and just below the line are nearly identical, so the jump in outcomes at the cutoff estimates a causal effect. Requirements: no precise manipulation of the running variable (check the density for bunching at the cutoff, the McCrary test), and recognize the effect is local to the cutoff — it need not generalize far away. RDD is one of the most credible quasi-experimental designs because the assignment rule is known, auditable, and outside anyone's discretion at the margin.",
+    "key_points": [
+      "Compare units just above vs just below the assignment threshold",
+      "Test for manipulation of the running variable (density/bunching checks at the cutoff)",
+      "The estimated effect is local to the cutoff; do not over-generalize",
+      "Credibility comes from a known, auditable assignment rule"
+    ],
+    "interview_angle": "'Program offered above a risk-score cutoff — evaluate it.' They want RDD with the manipulation check named. Drawing the running-variable plot with the jump described verbally is a strong move.",
+    "citations": [
+      "Thistlethwaite, D., Campbell, D. (1960). Regression-Discontinuity Analysis. Journal of Educational Psychology.",
+      "Lee, D., Lemieux, T. (2010). Regression Discontinuity Designs in Economics. Journal of Economic Literature."
+    ],
+    "related_scenarios": [],
+    "keywords": ["regression discontinuity", "RDD", "threshold", "cutoff", "running variable", "McCrary", "bunching", "eligibility", "local"]
+  },
+  {
+    "id": "its",
+    "title": "Interrupted time series (ITS)",
+    "summary": "Interrupted time series handles the single-treated-series case — one country, one product, no control group: project the pre-launch trend forward and compare it against the observed post-launch path. It needs a long, stable pre-period and fails when other things change at the same moment (concurrent launches, seasonality, marketing pushes). Strengthen it with a control series — an unaffected market turns the design into difference-in-differences — or with multiple baselines. ITS is honest about its weakness: without a control group, 'the trend changed' is suggestive, not causal.",
+    "key_points": [
+      "Extrapolate the pre-intervention trend; the gap to observed post-data is the estimated effect",
+      "Requires a long, stable pre-period; concurrent changes are the main threat",
+      "Adding a control series upgrades the design toward DiD",
+      "Without controls, treat conclusions as suggestive and say so"
+    ],
+    "interview_angle": "'One market, one launch, no control — what can you say?' They want ITS proposed with its caveats stated plainly, not oversold. Suggesting a synthetic control or unaffected-market comparison shows seniority.",
+    "citations": [
+      "Shadish, W., Cook, T., Campbell, D. (2002). Experimental and Quasi-Experimental Designs for Generalized Causal Inference."
+    ],
+    "related_scenarios": [],
+    "keywords": ["interrupted time series", "ITS", "trend break", "pre-period", "single series", "concurrent changes", "trend change", "no control"]
+  },
+  {
+    "id": "simpson",
+    "title": "Simpson's paradox and mix shifts",
+    "summary": "Simpson's paradox: the aggregate trend reverses within segments — overall conversion rises while every major segment declines. There is no paradox once you see the mix shift: the composition of traffic changed toward a high-converting segment (or treatment itself changed segment composition). It is a standing warning to check segment composition alongside every topline number, and to pre-specify whether the business cares about the marginal (aggregate) or the conditional (segment-adjusted) effect. In experiments, a treatment-induced compositional shift is itself a finding worth reporting.",
+    "key_points": [
+      "Aggregate reversals are caused by mix/composition shifts, not magic",
+      "Always inspect segment composition alongside topline metric movements",
+      "Pre-specify whether the decision needs the marginal or the conditional effect",
+      "Treatment-induced composition shifts are findings, not footnotes"
+    ],
+    "interview_angle": "'Overall conversion is up but every segment is down — explain.' They want the mix-shift mechanism crisply, ideally with a two-segment numerical sketch.",
+    "citations": [
+      "Blyth, C. (1972). On Simpson's Paradox and the Sure-Thing Principle. JASA.",
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press."
+    ],
+    "related_scenarios": [],
+    "keywords": ["Simpson's paradox", "mix shift", "composition", "aggregate vs segment", "confounding", "overall up segment down", "marginal", "conditional"]
+  },
+  {
+    "id": "contamination",
+    "title": "Contamination and crossover",
+    "summary": "Contamination is when users experience the other arm's treatment: shared devices, account sharing, users with multiple accounts, or bucketing by cookie instead of stable user ID. Unlike interference, which is structural to the product, contamination is usually a bug — and it biases estimated effects toward zero, since both arms receive a bit of both treatments. Detect it through exposure logging (did control users trigger treatment-only events?) and prevent it by randomizing on stable identifiers with sticky assignment.",
+    "key_points": [
+      "Users exposed to the wrong arm attenuate the estimated effect toward zero",
+      "Contamination is usually a bug (unlike structural interference)",
+      "Detect via exposure logging of treatment-only events in the control arm",
+      "Prevent with stable-ID randomization and sticky bucketing"
+    ],
+    "interview_angle": "'Users share devices across arms — what happens to your estimate?' They want attenuation toward zero named, plus the stable-ID fix. Distinguishing contamination from interference shows precision.",
+    "citations": [
+      "Kohavi, R., Tang, D., Xu, Y. (2020). Trustworthy Online Controlled Experiments. Cambridge University Press (randomization units and exposure)."
+    ],
+    "related_scenarios": [],
+    "keywords": ["contamination", "crossover", "stable ID", "sticky bucketing", "attenuation", "exposure logging", "shared devices", "wrong arm", "switch between treatment and control"]
+  }
+]}

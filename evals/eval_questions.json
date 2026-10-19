@@ -1,0 +1,333 @@
+{"questions": [
+  {
+    "id": "exp01",
+    "question": "How would you design an A/B test for a new feature?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["power", "srm", "guardrails"],
+    "expected_key_points": [
+      "State a falsifiable hypothesis linking the feature to a primary metric before launch",
+      "Randomize at the user level with stable IDs and sticky bucketing",
+      "Pick one primary metric plus guardrails; pre-commit runtime via power analysis",
+      "Validate with an SRM check before reading any metric"
+    ]
+  },
+  {
+    "id": "exp02",
+    "question": "How long should an experiment run?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["power"],
+    "expected_key_points": [
+      "Run a power analysis: choose MDE from business relevance (1-2% for mature products)",
+      "Sample size scales as variance over MDE squared",
+      "Cover full weekly cycles and pre-commit the runtime; do not extend on a whim"
+    ]
+  },
+  {
+    "id": "exp03",
+    "question": "Why shouldn't you stop a test the moment the p-value first falls below 0.05?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["peeking"],
+    "expected_key_points": [
+      "Repeated interim testing inflates the Type I error rate well above the nominal 5%",
+      "A p-value is only valid for a pre-committed sample size and analysis plan",
+      "Fix with pre-committed runtime, sequential methods, or alpha spending"
+    ]
+  },
+  {
+    "id": "exp04",
+    "question": "How would you choose a primary success metric for an experiment?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["guardrails", "power"],
+    "expected_key_points": [
+      "The metric must be aligned with the hypothesis and the business goal",
+      "It must be sensitive enough to move with the treatment (consider variance/MDE)",
+      "Pair it with guardrail metrics for trade-offs; one primary avoids multiplicity"
+    ]
+  },
+  {
+    "id": "exp05",
+    "question": "Conversion improves significantly but retention declines. Do you ship?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["guardrails"],
+    "expected_key_points": [
+      "No automatic ship: the launch rule is conjunctive, guardrails can veto",
+      "Quantify the trade-off rather than eyeballing it",
+      "Veto thresholds should have been pre-committed before readout"
+    ]
+  },
+  {
+    "id": "exp06",
+    "question": "How would you detect sample ratio mismatch?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["srm"],
+    "expected_key_points": [
+      "Chi-square goodness-of-fit test of observed arm counts against the designed ratio",
+      "Investigate before reading any metric; SRM is a smoke alarm for broken randomization",
+      "Enumerate root causes: bucketing bugs, bots, triggered-analysis joins, overlapping launches"
+    ]
+  },
+  {
+    "id": "exp07",
+    "question": "What if users switch between treatment and control — for example through shared devices?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["contamination"],
+    "expected_key_points": [
+      "This is contamination and it attenuates the estimated effect toward zero",
+      "Detect it with exposure logging of treatment-only events in control",
+      "Prevent with stable-ID randomization and sticky bucketing"
+    ]
+  },
+  {
+    "id": "exp08",
+    "question": "What if the treatment affects users who were not assigned to it?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "advanced",
+    "corpus_notes": ["interference", "cluster"],
+    "expected_key_points": [
+      "This violates SUTVA — it is interference/spillover, and naive estimates mix direct and spillover effects",
+      "Diagnose with cluster-robust vs naive standard errors",
+      "Design fix: cluster randomization at the level where SUTVA plausibly holds"
+    ]
+  },
+  {
+    "id": "exp09",
+    "question": "What if the treatment effect varies by customer segment?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["hte"],
+    "expected_key_points": [
+      "Heterogeneity is real but segment-hunting is multiple testing: ~1 false positive per 20 cuts at 0.05",
+      "Correct with Benjamini-Hochberg FDR; pre-register segments before readout",
+      "A credible HTE claim needs FDR survival plus a plausible mechanism"
+    ]
+  },
+  {
+    "id": "exp10",
+    "question": "Your experiment comes back statistically insignificant. What do you do?",
+    "category": "methodology",
+    "source": "bank-3A",
+    "difficulty": "core",
+    "corpus_notes": ["power"],
+    "expected_key_points": [
+      "Read the confidence interval, not just the p-value: a wide CI means 'we don't know', not 'no effect'",
+      "Check whether the experiment was powered for a realistic MDE",
+      "Decide among: extend on a pre-committed plan, iterate on the treatment, or kill it"
+    ]
+  },
+  {
+    "id": "exp11",
+    "question": "DashPass subscribers order more than non-subscribers. Does DashPass cause higher ordering?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "core",
+    "corpus_notes": ["matching"],
+    "expected_key_points": [
+      "No — this is selection bias: subscribers were already heavier users",
+      "Compare against matched non-subscribers with similar observables and show balance tables",
+      "Matching cannot fix selection on unobservables; an experiment is the gold standard"
+    ]
+  },
+  {
+    "id": "exp12",
+    "question": "How would you estimate the impact of a feature launched in only some markets?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "advanced",
+    "corpus_notes": ["did"],
+    "expected_key_points": [
+      "Use difference-in-differences: compare the change in treated markets to the change in control markets",
+      "The identifying assumption is parallel trends — validate with pre-period placebo tests",
+      "Watch for spillover between markets and compositional change"
+    ]
+  },
+  {
+    "id": "exp13",
+    "question": "How would you compare feature adopters against non-adopters who have different baseline characteristics?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "advanced",
+    "corpus_notes": ["matching"],
+    "expected_key_points": [
+      "Match on pre-treatment observables, e.g. via propensity scores",
+      "Demonstrate balance with balance tables after matching",
+      "The approach assumes selection on observables; unmeasured confounding remains a threat"
+    ]
+  },
+  {
+    "id": "exp14",
+    "question": "How would you evaluate a program that is assigned using an eligibility threshold, like a risk-score cutoff?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "advanced",
+    "corpus_notes": ["rdd"],
+    "expected_key_points": [
+      "Use a regression discontinuity design: compare units just above vs just below the cutoff",
+      "Check for manipulation of the running variable with density/bunching tests at the cutoff",
+      "The effect is local to the cutoff and need not generalize far away"
+    ]
+  },
+  {
+    "id": "exp15",
+    "question": "Did a product change alter the trend after launch, in a single market with no control group?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "advanced",
+    "corpus_notes": ["its"],
+    "expected_key_points": [
+      "Use interrupted time series: project the pre-launch trend forward and compare to observed post data",
+      "Requires a long, stable pre-period; concurrent changes are the main confounder",
+      "Without a control group the conclusion is suggestive, not causal — say so"
+    ]
+  },
+  {
+    "id": "exp16",
+    "question": "How can pre-experiment behavior reduce the variance of an experiment?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "core",
+    "corpus_notes": ["cuped"],
+    "expected_key_points": [
+      "CUPED: regress the metric on pre-period covariates and analyze the residuals",
+      "Typical ~50% variance reduction is equivalent to doubling the sample size",
+      "Covariates must be pre-treatment; the method fails on whale-dominated metrics and new users"
+    ]
+  },
+  {
+    "id": "exp17",
+    "question": "You cut results by 20 segments and several come back significant. How do you interpret them?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "core",
+    "corpus_notes": ["hte"],
+    "expected_key_points": [
+      "Expect roughly one false positive per 20 cuts at alpha = 0.05 by chance alone",
+      "Apply Benjamini-Hochberg FDR control before believing any segment",
+      "Trust pre-registered segments over data-mined ones; demand a mechanism"
+    ]
+  },
+  {
+    "id": "exp18",
+    "question": "Overall conversion increased, yet every major segment declined. Explain.",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "advanced",
+    "corpus_notes": ["simpson"],
+    "expected_key_points": [
+      "This is Simpson's paradox, driven by a mix/composition shift toward a high-converting segment",
+      "Inspect segment composition alongside the topline number",
+      "Decide whether the business cares about the marginal or the conditional effect"
+    ]
+  },
+  {
+    "id": "exp19",
+    "question": "How do you calculate uncertainty for a ratio metric like orders per active customer?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "advanced",
+    "corpus_notes": ["ratio_metrics"],
+    "expected_key_points": [
+      "Use the delta method or bootstrap for standard errors; naive per-user averaging mishandles zero denominators",
+      "Check for denominator shifts: treatment changing who is active can move the ratio spuriously",
+      "Analyze numerator and denominator separately when the denominator is affected"
+    ]
+  },
+  {
+    "id": "exp20",
+    "question": "How should a marketplace experiment handle geographic spillovers between arms?",
+    "category": "methodology",
+    "source": "bank-3B",
+    "difficulty": "advanced",
+    "corpus_notes": ["cluster", "interference"],
+    "expected_key_points": [
+      "Randomize at the market/geography level — cluster randomization keeps spillover inside the cluster",
+      "Effective sample size is the number of clusters, so power depends on cluster count",
+      "Analyze with cluster-robust standard errors"
+    ]
+  },
+  {
+    "id": "exp21",
+    "question": "The peeker's mirage: early enrollees showed +3.8% (p=2.7e-09), but the full sample shows +0.15% (p=0.647). Should we ship?",
+    "category": "scenario",
+    "source": "showroom",
+    "difficulty": "core",
+    "corpus_notes": ["peeking"],
+    "scenario": "peeking_trap",
+    "expected_key_points": [
+      "No — the interim significance without sequential correction is peeking, and the p-value is invalid",
+      "The full-sample result (+0.15%, p=0.647) is the valid readout: inconclusive",
+      "Interim looks are diagnostic, never decisive"
+    ]
+  },
+  {
+    "id": "exp22",
+    "question": "Whale variance: revenue per user is up about 36% and statistically significant, but the between-arm std ratio is roughly 3.0. Is the lift real?",
+    "category": "scenario",
+    "source": "showroom",
+    "difficulty": "core",
+    "corpus_notes": ["variance"],
+    "scenario": "whale_variance_trap",
+    "expected_key_points": [
+      "Do not trust it: a std ratio near 3.0 with a headline lift is the whale signature",
+      "A few extreme users are manufacturing the mean lift; check medians and winsorized means",
+      "The honest verdict is inconclusive — the experiment cannot separate real lift from whale luck"
+    ]
+  },
+  {
+    "id": "exp23",
+    "question": "Dilution trap: ITT is +0.35% (p=0.27) but CACE is +2.10% (p=0.0004) at a 30% trigger rate. What happened, and which number matters?",
+    "category": "scenario",
+    "source": "showroom",
+    "difficulty": "core",
+    "corpus_notes": ["triggering"],
+    "scenario": "dilution_trap",
+    "expected_key_points": [
+      "The low trigger rate diluted the true effect: ITT is roughly trigger-rate times CACE",
+      "CACE answers whether the feature works; ITT answers the business impact of launching",
+      "Report both, and do not call the experiment a failure from the ITT alone"
+    ]
+  },
+  {
+    "id": "exp24",
+    "question": "Trigger imbalance: the naive triggered estimate is -2.1% but the true effect is +2.0%. Why did the sign flip?",
+    "category": "scenario",
+    "source": "showroom",
+    "difficulty": "advanced",
+    "corpus_notes": ["trigger_imbalance"],
+    "scenario": "trigger_imbalance_trap",
+    "expected_key_points": [
+      "Trigger rates differ by arm, so the triggered subset is self-selected: selection bias",
+      "The balance check on trigger rates is the gate that should have caught this",
+      "CUPED only partially debiases selection on observables; the verdict is inconclusive"
+    ]
+  },
+  {
+    "id": "exp25",
+    "question": "Guardrail veto: engagement is up significantly, but the user-reports rate rose about 28%. Launch?",
+    "category": "scenario",
+    "source": "showroom",
+    "difficulty": "core",
+    "corpus_notes": ["guardrails"],
+    "scenario": "guardrail_violation_trap",
+    "expected_key_points": [
+      "Do not launch: the guardrail veto is conjunctive with the primary win",
+      "A large guardrail movement blocks launch even if the primary metric is significant",
+      "Veto thresholds should have been pre-committed before readout"
+    ]
+  }
+]}
