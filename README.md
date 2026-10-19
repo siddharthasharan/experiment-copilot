@@ -122,6 +122,56 @@ tails trip the share rule on their own; and the guardrail veto requires both
 statistical (p < 0.01, paired daily t-test on reports) and practical (>10%
 lift) significance, so rare-event noise can't veto a clean launch.
 
+## v2 data design: baseline metrics at realistic MDEs
+
+Step 1 of v2 replaces the 5%-lift demo data with Meta-scale baseline metrics
+at realistic 1–2% MDEs (`src/experiment_copilot/data_v2.py`,
+`src/experiment_copilot/power.py`). Key design choices:
+
+**Power table** — for a two-arm test at α=0.05, 80% power, per-arm
+n ≈ 15.68 × CV² / r². At the uniform n = 400,000 (200k/arm):
+
+| Metric | MDE | n/arm needed (raw) | n/arm (CUPED R²=0.55) | Power @400k |
+|---|---|---|---|---|
+| engagement (CV≈1) | +2% | 39k | 18k | 1.00 |
+| revenue/user (lognormal σ=1.6, CV≈3.5) | +2% | 467k | 210k | 0.45 → 0.78 w/ CUPED |
+| converted (base 30%) | +2% | 92k | — | 0.99 |
+| reports (base 0.1%) | +35% | 128k | — | 0.94 |
+
+Two takeaways: the volume drivers are the heavy-tailed revenue primary and
+the *rare guardrail metric* (detecting +35% on a 0.1% report rate needs
+~256k users) — hence 400k, not millions. And the cheapest sample size is
+variance reduction, not rows: a 28-day pre-period covariate (target CUPED
+R² ≈ 0.5–0.6) is what makes the revenue read viable at all.
+
+**Per-user grain, parquet.** One row per user (400k rows, not ~17M daily
+rows). Daily structure exists only where a trap needs it: `enrollment_day`
+(peeking/novelty) and `report_day` (guardrail). Full 400k outputs live in
+`eval_data_v2/` (gitignored); committed 20k-user samples live in
+`data_v2_sample/`. Generation is vectorized numpy — ~0.4s per scenario.
+
+**The honest whale trap.** The v1 trap was dishonest: its outlier bomb
+landed on a secondary metric while the headline ran on `converted`. In v2
+the whales go into the *primary* revenue metric itself — 250 treatment users
+(0.125% of the arm) set to a $400–800 spend tier against a ~$2.23 mean.
+Headline revenue reads ~+36% with p ≈ 0; the std-ratio variance flag
+(~3.0) catches it 100% of seeds. That is the actual Meta-scale whale case.
+
+**Detector finding (measured, not opinion).** Running the real
+`check_variance_health` across seeds: the outlier-share rule has 0%
+false-positives on 28-day per-user totals but 100% on raw lognormal
+observations — so it is grain-dependent and must stay gated to aggregated
+metrics. On the honest whale trap the share rule is blind (0% at the
+overnight operating point) while the std-ratio rule (bar 2.0) catches
+90–100%. The std-ratio is the primary signal; the share rule is secondary.
+
+**Calibration.** `scripts/calibrate_v2.py` verifies all 7 scenarios × 10
+seeds against the real stats functions — 17/17 checks green, including
+t ≈ 6 on the +2% clean win, the guardrail veto firing on reports +38%,
+and the novelty trap's early/late heterogeneity. No detector changes were
+needed for v2; the generator was tuned instead (fixed whale tier for seed
+stability, higher log-space pre-period correlation so revenue CUPED lands).
+
 ## Roadmap
 
 - [x] **Week 1** — synthetic data generator + stats engine + MCP tools *(this repo)*

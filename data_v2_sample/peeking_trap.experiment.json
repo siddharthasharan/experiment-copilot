@@ -1,0 +1,58 @@
+{
+  "scenario": "peeking_trap",
+  "n_users": 20000,
+  "seed": 103,
+  "intended_allocation": 0.5,
+  "actual_allocation": 0.5008,
+  "traps": [
+    "peeking"
+  ],
+  "true_lifts": {
+    "engagement": 0.0,
+    "revenue": 0.0,
+    "reports": 0.0
+  },
+  "expected_verdict": "inconclusive",
+  "expected_flag": "early-cohort significance washes out full-sample; interim looks without correction",
+  "design_notes": {
+    "grain": "per-user (not daily rows)",
+    "pre_period_days": 28,
+    "exp_days": 28,
+    "whale_trap": null
+  },
+  "power_adequacy": {
+    "engagement": {
+      "mde": 0.02,
+      "required_n_per_arm": 39244,
+      "required_n_per_arm_cuped": 17660,
+      "power_at_design_n": 1.0,
+      "power_at_design_n_cuped": 1.0,
+      "adequate": true
+    },
+    "revenue": {
+      "mde": 0.02,
+      "required_n_per_arm": 467106,
+      "required_n_per_arm_cuped": 210198,
+      "power_at_design_n": 0.45,
+      "power_at_design_n_cuped": 0.78,
+      "adequate": false
+    },
+    "converted": {
+      "mde": 0.02,
+      "required_n_per_arm": 91570,
+      "required_n_per_arm_cuped": 91570,
+      "power_at_design_n": 0.985,
+      "power_at_design_n_cuped": 0.985,
+      "adequate": true
+    },
+    "reports": {
+      "mde": 0.35,
+      "required_n_per_arm": 128017,
+      "required_n_per_arm_cuped": 128017,
+      "power_at_design_n": 0.938,
+      "power_at_design_n_cuped": 0.938,
+      "adequate": true
+    }
+  },
+  "note": "20k-user committed sample of the full n=400000 run; power adequacy figures refer to the full n."
+}
