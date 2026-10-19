@@ -1,0 +1,31 @@
+{
+  "scenario": "triggered_clean_win",
+  "step": 2,
+  "n_users": 20000,
+  "seed": 203,
+  "intended_allocation": 0.5,
+  "true_cace_engagement": 0.025,
+  "true_cace_applies_to": "triggered users only",
+  "trigger_rate_control": 0.5004,
+  "trigger_rate_treatment": 0.5024,
+  "trigger_rate_overall": 0.5014,
+  "trigger_design": {
+    "base_rate": 0.5,
+    "rate_by": null,
+    "propensity": null,
+    "treat_shift": 0.0
+  },
+  "expected_verdict": "launch",
+  "expected_flag": "",
+  "valid_analysis": "both",
+  "traps": [],
+  "power_adequacy": {
+    "cace_triggered_arm_n": 100275,
+    "cace_required_per_arm": 25116,
+    "cace_required_per_arm_cuped": 12558,
+    "cace_power_raw": 1.0,
+    "cace_power_cuped": 1.0,
+    "note": "CACE power assumes the +2.5% triggered lift; CUPED R^2=0.5 is load-bearing for the triggered analysis."
+  },
+  "note": "20k-user committed sample of the full n=400000 run; power adequacy figures refer to the full n."
+}

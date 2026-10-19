@@ -6,4 +6,4 @@ data/
 eval_data/
 .DS_Store
 eval_data_v2/
-*.zip
+eval_data_v2_triggered/

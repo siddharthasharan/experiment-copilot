@@ -1,0 +1,36 @@
+{
+  "scenario": "trigger_imbalance_trap",
+  "step": 2,
+  "n_users": 20000,
+  "seed": 202,
+  "intended_allocation": 0.5,
+  "true_cace_engagement": 0.02,
+  "true_cace_applies_to": "triggered users only",
+  "trigger_rate_control": 0.1998,
+  "trigger_rate_treatment": 0.2474,
+  "trigger_rate_overall": 0.2236,
+  "trigger_design": {
+    "base_rate": 0.2,
+    "rate_by": null,
+    "propensity": [
+      "pre_engagement_28d",
+      0.08
+    ],
+    "treat_shift": 0.05
+  },
+  "expected_verdict": "inconclusive",
+  "expected_flag": "TRIGGER IMBALANCE: treatment shifts trigger rates (+5pp) and triggering correlates with engagement \u2014 triggered-only analysis is selection-biased. Fall back to ITT.",
+  "valid_analysis": "itt",
+  "traps": [
+    "trigger_imbalance"
+  ],
+  "power_adequacy": {
+    "cace_triggered_arm_n": 44722,
+    "cace_required_per_arm": 25116,
+    "cace_required_per_arm_cuped": 12558,
+    "cace_power_raw": 0.962,
+    "cace_power_cuped": 1.0,
+    "note": "CACE power assumes the +2.5% triggered lift; CUPED R^2=0.5 is load-bearing for the triggered analysis."
+  },
+  "note": "20k-user committed sample of the full n=400000 run; power adequacy figures refer to the full n."
+}

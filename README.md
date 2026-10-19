@@ -172,6 +172,55 @@ and the novelty trap's early/late heterogeneity. No detector changes were
 needed for v2; the generator was tuned instead (fixed whale tier for seed
 stability, higher log-space pre-period correlation so revenue CUPED lands).
 
+## Triggered analysis: ITT vs CACE (step 2)
+
+Step 2 (`src/experiment_copilot/triggering.py`,
+`src/experiment_copilot/triggered_data.py`) covers experiments where only a
+fraction τ of randomized users ever reach the treated surface — the
+standard Meta situation for deep-funnel features. Three analyses answer
+three questions:
+
+- **ITT** (intent-to-treat): Welch's t over *all* randomized users. Diluted
+  (ITT ≈ τ × CACE) but unbiased for "what happens to the overall metric if
+  we ship this."
+- **CACE**: the effect on the triggered. The primary estimator is the
+  *direct triggered contrast* (Welch's t on triggered users), valid when
+  triggering is unaffected by treatment. The Wald IV estimator
+  (ITT / P(trigger|treatment)) is kept for the unobservable-trigger case,
+  but it pays full-sample noise — at τ=0.18 its SE is ~3× the direct
+  contrast's, so it is strictly a fallback.
+- **Trigger-balance check**: chi-square on trigger rates by arm (α=0.001).
+  Fires ⇒ the triggered subpopulations differ by arm ⇒ triggered-only
+  contrasts are selection-biased ⇒ fall back to ITT.
+
+**Power.** On the *same* experiment, ITT needs 1/τ× the randomized users
+of the CACE analysis for equal power (~3.3× at a 30% trigger rate) —
+because ITT sees τ× more users, offsetting one factor of τ. (The 1/τ²
+figure you'll see elsewhere is vs a hypothetical design where everyone
+triggers, not the same-experiment comparison.) `power.py` gained
+`required_n_triggered` (base/τ) and `required_n_itt` (base/τ², vs the
+all-trigger baseline).
+
+**Scenarios** (400k users, per-user grain, parquet; full outputs in
+`eval_data_v2_triggered/`, 20k samples in `data_v2_sample/`):
+
+| Scenario | Design | Correct verdict |
+|---|---|---|
+| `dilution_trap` | +2.5% engagement on triggered only, τ≈0.15 (heterogeneous by tenure) | **launch** — CACE significant; ITT diluted and usually misses; rollout impact ≈ CACE × τ |
+| `trigger_imbalance_trap` | treatment boosts triggering +5pp; triggering correlates with engagement | **inconclusive** — balance check fires; triggered analysis selection-biased (naive estimate flips sign: −2.1% vs true +2.0%); use ITT |
+| `triggered_clean_win` | +2.5% on triggered, τ=0.5, balanced | **launch** — CACE and ITT agree, dilution math exact |
+
+**Calibration** (`scripts/calibrate_triggered.py`, 10 seeds/scenario, real
+estimators): 8/8 green — CACE+CUPED significant 100% on the dilution trap
+while ITT misses ~75% (40-seed measurement: 25% ITT power), ITT < ½×CACE
+every seed (dilution is structural, not p-value luck), |ITT − τ×CACE| within
+tolerance, balance check fires 100% on the imbalance trap and stays quiet
+on the dilution trap. One honest calibration note: the dilution demo seed
+was re-picked after the first seed's null ITT ran +0.62% (a 2σ unlucky
+randomization that swamped the +0.44% diluted signal) — the trap is
+dilution, so the demo instance is chosen clean; the mechanism is verified
+across 40 seeds.
+
 ## Roadmap
 
 - [x] **Week 1** — synthetic data generator + stats engine + MCP tools *(this repo)*

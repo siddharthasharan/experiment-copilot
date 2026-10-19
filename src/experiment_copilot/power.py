@@ -57,6 +57,30 @@ def apply_cuped(n: float, r_squared: float) -> float:
     return n * (1.0 - r_squared)
 
 
+def required_n_triggered(base_n_cace: float, trigger_rate: float) -> float:
+    """Randomized users per arm so the TRIGGERED (CACE) analysis reaches
+    ``base_n_cace`` triggered users per arm.
+
+    Only a fraction tau of randomized users trigger, so randomize
+    base_n_cace / tau per arm. At tau=0.3, a CACE analysis powered for
+    50k/arm needs ~167k randomized users per arm.
+    """
+    return base_n_cace / trigger_rate
+
+
+def required_n_itt(base_n_cace: float, trigger_rate: float) -> float:
+    """Randomized users per arm for ITT to match the CACE analysis power.
+
+    The ITT effect is diluted to tau * CACE, so to hold the test's
+    non-centrality fixed the variance must shrink by tau^2 — hence
+    base_n_cace / tau^2 randomized users per arm (~11x vs a design where
+    everyone triggers). Against the CACE analysis on the *same* experiment
+    — which itself randomizes base_n_cace / tau per arm — ITT needs 1/tau x
+    more, i.e. ~3.3x at tau=0.3.
+    """
+    return base_n_cace / trigger_rate**2
+
+
 def achieved_power(n_per_arm: float, cv: float, relative_lift: float,
                    alpha: float = 0.05) -> float:
     """Power achieved with `n_per_arm` per arm for a continuous metric."""
