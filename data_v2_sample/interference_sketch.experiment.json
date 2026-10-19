@@ -1,0 +1,23 @@
+{
+  "scenario": "interference_sketch",
+  "n_users": 20000,
+  "seed": 304,
+  "actual_allocation": 0.4965,
+  "true_effects": {
+    "direct_lift": 0.02,
+    "spillover_lambda": 3.2,
+    "spillover_form": "y += lambda * 100 * (frac_treated_cluster_mates - 0.5)"
+  },
+  "expected_verdict": "SUTVA risk flagged \u2014 treat SEs as understated",
+  "expected_flag": "cluster-robust SE ~1.3x naive; user-level randomization with spillover",
+  "checks_that_must_fire": [
+    "cluster-robust SE > naive SE (ratio > 1.15)",
+    "SUTVA flag fires (ratio > 1.25)"
+  ],
+  "design_notes": {
+    "n_clusters": 2000,
+    "randomization": "user-level (not clustered)",
+    "lambda_note": "3.2 is deliberately exaggerated for visibility and demeaned so it adds no level shift; SE inflation ~= 1 + (m/2-1)*rho with rho ~= (lambda*100*0.5/sqrt(m)/sigma)^2, sigma ~= 143 -> ratio ~1.28; real spillovers are subtler and invisible"
+  },
+  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+}

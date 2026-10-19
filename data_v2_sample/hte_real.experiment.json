@@ -1,0 +1,22 @@
+{
+  "scenario": "hte_real",
+  "n_users": 20000,
+  "seed": 303,
+  "actual_allocation": 0.5041,
+  "true_effects": {
+    "lift_new_segment": 0.04,
+    "lift_other_segments": 0.01,
+    "heterogeneity_pp": 0.03
+  },
+  "expected_verdict": "credible heterogeneity \u2014 decide per segment",
+  "expected_flag": "'new' segment +4% survives FDR; others +1%",
+  "checks_that_must_fire": [
+    "Cochran's Q significant",
+    "'new' segment survives BH-FDR"
+  ],
+  "design_notes": {
+    "n_segments": 13,
+    "prespecified_segment": "new (~30% of users)"
+  },
+  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+}

@@ -1,0 +1,21 @@
+{
+  "scenario": "hte_mirage_trap",
+  "n_users": 20000,
+  "seed": 302,
+  "actual_allocation": 0.5006,
+  "true_effects": {
+    "lift_all_segments": 0.02,
+    "heterogeneity": 0.0
+  },
+  "expected_verdict": "no credible heterogeneity",
+  "expected_flag": "homogeneous +2%; nominal segment hits are multiple-testing noise \u2014 BH-FDR clean",
+  "checks_that_must_fire": [
+    "Cochran's Q not significant (no real heterogeneity)",
+    "BH-FDR leaves zero surviving segments"
+  ],
+  "design_notes": {
+    "n_segments": 13,
+    "trap": "~half the seeds show a raw nominal segment deviation by chance \u2014 the mirage BH must kill"
+  },
+  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+}

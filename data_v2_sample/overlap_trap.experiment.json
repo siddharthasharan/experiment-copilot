@@ -1,0 +1,23 @@
+{
+  "scenario": "overlap_trap",
+  "n_users": 20000,
+  "seed": 301,
+  "actual_allocation": 0.4935,
+  "true_effects": {
+    "A_lift_given_B0": 0.02,
+    "A_lift_given_B1": -0.005,
+    "AxB_interaction_pp": -0.025,
+    "pooled_A_lift": 0.0075
+  },
+  "expected_verdict": "inconclusive \u2014 flag overlap, report stratified",
+  "expected_flag": "A\u00d7B interaction: +2% when B=control, -0.5% when B=treatment; pooled +0.75% is misleading",
+  "checks_that_must_fire": [
+    "overlap interaction detected (A\u00d7B p<0.05)",
+    "stratified estimates recover +2% / -0.5%"
+  ],
+  "design_notes": {
+    "B_assignment": "independent 50/50, column exp_b",
+    "trap": "pooled naive read (+0.75%, significant ~2/3 of seeds) hides the interaction"
+  },
+  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+}

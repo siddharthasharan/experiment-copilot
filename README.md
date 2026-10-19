@@ -221,6 +221,49 @@ randomization that swamped the +0.44% diluted signal) — the trap is
 dilution, so the demo instance is chosen clean; the mechanism is verified
 across 40 seeds.
 
+## Interaction effects: overlap, HTE, interference (step 3)
+
+Step 3 (`src/experiment_copilot/interaction.py`,
+`src/experiment_copilot/interaction_data.py`) covers the three ways a
+single-experiment analysis goes wrong in a matrixed experimentation
+program:
+
+- **Overlap**: users are randomized into many experiments at once. A
+  concurrent experiment B with a true A×B interaction makes the naive
+  pooled A estimate a weighted average of two different truths.
+  `overlap_analysis` stratifies by B arm and tests the interaction.
+- **HTE / segment mirage**: with ~12 segments, some cell will hit nominal
+  p<0.05 by chance. `interaction_test` (OLS interaction terms + Cochran's
+  Q) plus `bh_fdr` (Benjamini-Hochberg, q=0.10) separates the mirage from
+  real heterogeneity.
+- **Interference (SUTVA sketch)**: users in ~2k clusters with a spillover
+  term — outcome depends on treated cluster-mates. The naive i.i.d. SE
+  understates uncertainty; `cluster_robust_se` (Liang-Zeger sandwich, per
+  arm) is wider and a SUTVA flag fires. Documented as a sketch: clusters
+  are assumed independent, no cross-cluster spillover modeled.
+
+**Scenarios** (400k users, per-user grain, parquet; full outputs in
+`eval_data_v2_interaction/`, 20k samples in `data_v2_sample/`):
+
+| Scenario | Design | Correct verdict |
+|---|---|---|
+| `overlap_trap` | independent experiment B (50/50); true A×B interaction: A lifts +2% when B=control, −0.5% when B=treatment | **stratify** — interaction detected; pooled naive estimate (+0.8%, significant 5/10 seeds) is a misleading average |
+| `hte_mirage_trap` | ~12 segments, homogeneous +2% everywhere | **no credible heterogeneity** — BH-FDR kills the nominal segment hits (mirage appears ~3/10 seeds) |
+| `hte_real` | ~12 segments; "new" truly +4%, others +1% | **credible heterogeneity** — the pre-specified segment survives FDR 10/10; decide per segment |
+| `interference_sketch` | 2k clusters × 200 users, user-level randomization, demeaned spillover λ=3.2 | **SUTVA risk flagged** — cluster-robust SE ~1.28× naive; treat SEs as understated |
+
+**Calibration** (`scripts/calibrate_interaction.py`, 10 seeds/scenario):
+9/9 green — interaction detected 10/10 with stratified estimates recovering
+truth (+2.0%/−0.5%), BH clean 9/10 on the mirage (Cochran's Q quiet 10/10),
+the true segment survives FDR 10/10, cluster/naive SE ratio 10/10 in
+(1.26–1.30) with the SUTVA flag firing 10/10 and the λ=0 control honest
+(ratio ≈1.00). One honest tuning note: the first interference build used
+λ=1.5 with a non-demeaned spillover and failed both gates (median ratio
+1.07) — the module's own docstring math assumed outcome σ=100 (actual
+≈143) and full-cluster m in the sandwich (the estimator works per arm, so
+effective m is halved). Fixed with a demeaned spillover (zero level shift)
+at λ=3.2, re-derived in the docstring, re-verified across seeds.
+
 ## Roadmap
 
 - [x] **Week 1** — synthetic data generator + stats engine + MCP tools *(this repo)*
