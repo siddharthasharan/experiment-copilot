@@ -2,14 +2,14 @@
 v2 synthetic data generator: Meta-scale baseline metrics at per-user grain.
 
 Design decisions (see README "v2 data design"):
-  - Per-user rows, NOT daily rows: 400k rows instead of ~17M. Daily grain
+  - Per-user rows, NOT daily rows: 1M rows instead of ~42M. Daily grain
     exists only where a trap needs temporal structure, encoded via
     `enrollment_day` (peeking, novelty) and `report_day` (guardrail).
   - Heavy-tailed PRIMARY for the whale trap: revenue_per_user is lognormal
     with sigma=1.6 (CV~3.5, mean ~$2.23/28d). The v1 trap was dishonest —
     its bomb landed on a secondary metric while the headline ran on
     `converted`. Here the whales go into the primary metric itself.
-  - Whale count scales with n: 0.125% of the treatment arm (250 at n=400k),
+  - Whale count scales with n: 0.125% of the treatment arm (625 at n=1M),
     set to a fixed $400-800 spend tier (vs ~$2.23 mean). Fixed values keep
     the std-ratio stable (~3) across seeds; random-pick x-multiplier designs
     had 20% seed-miss rates. Targeting std-ratio ~3 for ~100% detection.
@@ -41,7 +41,7 @@ import pandas as pd
 from .power import (achieved_power, achieved_power_binary, apply_cuped,
                     required_n, required_n_binary)
 
-N_USERS = 400_000
+N_USERS = 1_000_000
 EXP_DAYS = 28
 PRE_DAYS = 28
 
@@ -59,7 +59,7 @@ PRE_RHO = 0.75                            # pre/exp correlation (engagement)
 # rho=0.75 gives levels R^2 ~ 0.24; rho=0.89 gives ~0.55. Spend habits are
 # persistent, so this is realistic, and CUPED on revenue is load-bearing.
 PRE_RHO_REV = 0.89
-WHALE_FRAC = 0.00125                       # of treatment arm (250 at n=400k)
+WHALE_FRAC = 0.00125                       # of treatment arm (625 at n=1M)
 # Whales get FIXED uniform values (not a multiplier): random selection +
 # multiplier has high seed variance (sometimes the picked users are small).
 # Fixed $400-800 values give a stable std-ratio ~3 across seeds and mirror
@@ -264,7 +264,7 @@ def _adequacy(kind: str, cv_or_p: float, lift: float, n_arm: float) -> dict:
 
 
 def v2_scenarios(seed_offset: int = 0) -> list[V2Scenario]:
-    """The six v2 baseline scenarios. Realistic 1-2% MDEs, uniform n=400k."""
+    """The six v2 baseline scenarios. Realistic 1-2% MDEs, uniform n=1M."""
     return [
         V2Scenario("clean_win", seed=101 + seed_offset,
                    engagement_lift=0.02,
@@ -319,7 +319,7 @@ def write_scenario(spec: V2Scenario, outdir: str,
                           index=False)
         key = dict(exp.ground_truth)
         key["n_users"] = sample_n
-        key["note"] = (f"20k-user committed sample of the full n={spec.n_users} "
+        key["note"] = (f"{sample_n:,}-user committed sample of the full n={spec.n_users} "
                        "run; power adequacy figures refer to the full n.")
         with open(os.path.join(sample_dir, f"{spec.name}.experiment.json"), "w") as f:
             json.dump(key, f, indent=2)
@@ -333,7 +333,7 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=N_USERS)
     ap.add_argument("--seed-offset", type=int, default=0)
     ap.add_argument("--outdir", default="eval_data_v2")
-    ap.add_argument("--sample-n", type=int, default=20_000)
+    ap.add_argument("--sample-n", type=int, default=100_000)
     ap.add_argument("--sample-dir", default="data_v2_sample")
     args = ap.parse_args()
 

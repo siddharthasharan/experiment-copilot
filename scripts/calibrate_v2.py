@@ -169,7 +169,7 @@ def scorecard(res: dict) -> str:
 
     c = res["clean_win"]
     row("clean_win", "engagement significant", c["eng_sig"], 1.0)
-    row("clean_win", "t-stat mean", c["t_stat"], (5.0, 8.0), "mean")
+    row("clean_win", "t-stat mean", c["t_stat"], (8.0, 12.0), "mean")  # sqrt(n)-scaled from 5-8 at 400k; observed 9.8 at 1M
     row("clean_win", "CUPED var-red engagement", c["cuped_vr_eng"], (0.45, 0.70), "mean")
     row("clean_win", "CUPED var-red revenue", c["cuped_vr_rev"], (0.45, 0.70), "mean")
 
@@ -200,7 +200,7 @@ def scorecard(res: dict) -> str:
 
     L.append("-" * 78)
     L.append(f"generation time: {res['_gen_seconds_total']:.1f}s for "
-             f"{6 * N_SEEDS} x 400k-user scenarios "
+             f"{6 * N_SEEDS} x 1M-user scenarios "
              f"({res['_gen_seconds_total'] / (6 * N_SEEDS):.2f}s/scenario)")
     L.append("=" * 78)
     return "\n".join(L)

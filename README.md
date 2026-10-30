@@ -3,6 +3,67 @@
 An AI that reviews A/B tests like a product data scientist — then gets graded
 on whether it catches the traps.
 
+## Live demo
+
+- **Showroom (GitHub Pages):** https://siddharthasharan.github.io/experiment-copilot/
+- **Showroom (Render, static site):** https://experiment-copilot.onrender.com
+
+The showroom is a self-contained static page: 14 scenarios, each reviewed with
+the real stats estimators, with the trap revealed at the end. No login, no
+server, no data leaves your browser — the numbers are baked in at build time.
+
+## Scale at a glance
+
+| | Before | Now |
+|---|---|---|
+| Full generator, per scenario | 400,000 users | **1,000,000 users** |
+| Scenarios | 14 | 14 (7 baseline + 3 triggered + 4 interaction) |
+| Full data, all scenarios | 5.6M user-rows (~195 MB, gitignored) | **14M user-rows (~463 MB, gitignored)** |
+| Committed sample, per scenario | 20,000 users | **100,000 users** |
+| Committed sample, all scenarios | 280k rows (12 MB) | **1.4M rows (57 MB) in `data_v2_sample/`** |
+| Showroom verdicts | 14/14 | **14/14 at 1M** (see scale note below) |
+| Calibration | 17/17 + 8/8 + 9/9 at 400k | **17/17 + 8/8 + all-green at 1M** |
+
+Regenerate everything locally (the full data is gitignored, so a fresh clone
+must generate it — the committed sample is what reviewers run without that
+step):
+
+```bash
+.venv/bin/python -m experiment_copilot.data_v2 --n 1000000 --sample-n 100000
+.venv/bin/python -m experiment_copilot.triggered_data --n 1000000 --sample-n 100000
+.venv/bin/python -m experiment_copilot.interaction_data --n 1000000 --sample-n 100000
+.venv/bin/python scripts/build_showroom.py   # writes docs/index.html
+```
+
+## Scale note: what 400k → 1M actually changed (and what it didn't)
+
+Scaling is not free — two showroom decision rules were scale-fragile and had
+to be recalibrated, and both fixes are in `scripts/build_showroom.py` only
+(the stats engine and the generator's trap design are untouched):
+
+- **Novelty detector.** The old rule fired only if the long-exposure cohort
+  was *not significant*. At 1M, the demo seed's long-exposure average lift
+  (+1.05%) is significant even though it is under half the recent-cohort
+  lift (+2.90%) — significance alone can no longer tell "null" from "small
+  residual average". The rule now fires on material decay: full-sample
+  significant, early/late heterogeneity significant, and long-exposure lift
+  under half the recent lift. The trap story is unchanged; the detector
+  stopped asking a question that sample size answers by itself.
+- **Showroom guardrail veto.** The showroom now uses alpha = 0.01 (the eval
+  harness's documented veto bar), not `check_guardrail`'s 0.05 default. At 1M
+  the whale demo seed's true-null reports lift (+12% on daily totals,
+  paired p = 0.027, per-user p = 0.083) otherwise vetoed spuriously and hid
+  the variance story. The true guardrail scenario (+35–38% reports) still
+  vetoes comfortably under 0.01.
+- **Everything else scaled cleanly.** Whale count scales with n by design
+  (0.125% of the treatment arm: 250 at 400k → 625 at 1M), so the headline
+  revenue lift (~+37%) and std ratio (~3.1) are unchanged. Interference
+  clusters stay at 2,000 (cluster size 200 → 500 users); the cluster/naive
+  SE ratio is still 1.28 median. The one calibration gate that moved is the
+  clean-win t-statistic: t scales with sqrt(n), so 6.3 at 400k → 9.8 at 1M,
+  and the gate in `scripts/calibrate_v2.py` moved from 5–8 to 8–12 with that
+  reasoning written in — the generator was not retuned to hit the old gate.
+
 Existing analytics MCP servers (Amplitude, PostHog, GrowthBook) are thin data
 pipes: they fetch numbers but do none of the *judgment*. This project is the
 statistician's brain: SRM checks, peeking/novelty detection, CUPED, segment
@@ -29,8 +90,7 @@ scores whether the agent catches them.
                           └─────────────────────────┘
 ```
 
-Coming next (roadmap below): RAG methodology layer, LLM launch-memo agent,
-LLM-judge for memo quality.
+Showroom live (links above); RAG methodology layer done — 20 notes, 25-question eval set, 25/25 top-3 retrieval (see below). Still open: LLM launch-memo agent, LLM-judge for memo quality.
 
 ## Quickstart
 
@@ -129,31 +189,32 @@ at realistic 1–2% MDEs (`src/experiment_copilot/data_v2.py`,
 `src/experiment_copilot/power.py`). Key design choices:
 
 **Power table** — for a two-arm test at α=0.05, 80% power, per-arm
-n ≈ 15.68 × CV² / r². At the uniform n = 400,000 (200k/arm):
+n ≈ 15.68 × CV² / r². At the uniform n = 1,000,000 (500k/arm):
 
-| Metric | MDE | n/arm needed (raw) | n/arm (CUPED R²=0.55) | Power @400k |
+| Metric | MDE | n/arm needed (raw) | n/arm (CUPED R²=0.55) | Power @1M |
 |---|---|---|---|---|
 | engagement (CV≈1) | +2% | 39k | 18k | 1.00 |
-| revenue/user (lognormal σ=1.6, CV≈3.5) | +2% | 467k | 210k | 0.45 → 0.78 w/ CUPED |
-| converted (base 30%) | +2% | 92k | — | 0.99 |
-| reports (base 0.1%) | +35% | 128k | — | 0.94 |
+| revenue/user (lognormal σ=1.6, CV≈3.5) | +2% | 467k | 210k | 0.83 → 0.99 w/ CUPED |
+| converted (base 30%) | +2% | 92k | — | 1.00 |
+| reports (base 0.1%) | +35% | 128k | — | 1.00 |
 
 Two takeaways: the volume drivers are the heavy-tailed revenue primary and
 the *rare guardrail metric* (detecting +35% on a 0.1% report rate needs
-~256k users) — hence 400k, not millions. And the cheapest sample size is
+~256k users) — hence 1M, which now powers even the heavy-tailed revenue metric raw (0.83), with CUPED taking it to 0.99. And the cheapest sample size is
 variance reduction, not rows: a 28-day pre-period covariate (target CUPED
 R² ≈ 0.5–0.6) is what makes the revenue read viable at all.
 
-**Per-user grain, parquet.** One row per user (400k rows, not ~17M daily
+**Per-user grain, parquet.** One row per user (1M rows, not ~42M daily
 rows). Daily structure exists only where a trap needs it: `enrollment_day`
-(peeking/novelty) and `report_day` (guardrail). Full 400k outputs live in
-`eval_data_v2/` (gitignored); committed 20k-user samples live in
-`data_v2_sample/`. Generation is vectorized numpy — ~0.4s per scenario.
+(peeking/novelty) and `report_day` (guardrail). Full 1M outputs live in
+`eval_data_v2/` (gitignored, ~264 MB for the 7 baseline scenarios);
+committed 100k-user samples live in `data_v2_sample/` (~57 MB for all 14
+scenarios). Generation is vectorized numpy — ~1.1s per scenario at 1M.
 
 **The honest whale trap.** The v1 trap was dishonest: its outlier bomb
 landed on a secondary metric while the headline ran on `converted`. In v2
-the whales go into the *primary* revenue metric itself — 250 treatment users
-(0.125% of the arm) set to a $400–800 spend tier against a ~$2.23 mean.
+the whales go into the *primary* revenue metric itself — 625 treatment users
+(0.125% of the arm, scaled with n) set to a $400–800 spend tier against a ~$2.23 mean.
 Headline revenue reads ~+36% with p ≈ 0; the std-ratio variance flag
 (~3.0) catches it 100% of seeds. That is the actual Meta-scale whale case.
 
@@ -166,8 +227,8 @@ overnight operating point) while the std-ratio rule (bar 2.0) catches
 90–100%. The std-ratio is the primary signal; the share rule is secondary.
 
 **Calibration.** `scripts/calibrate_v2.py` verifies all 7 scenarios × 10
-seeds against the real stats functions — 17/17 checks green, including
-t ≈ 6 on the +2% clean win, the guardrail veto firing on reports +38%,
+seeds against the real stats functions — 17/17 checks green at 1M, including
+t ≈ 9.8 on the +2% clean win (sqrt(n)-scaled from ~6.3 at 400k), the guardrail veto firing on reports +38%,
 and the novelty trap's early/late heterogeneity. No detector changes were
 needed for v2; the generator was tuned instead (fixed whale tier for seed
 stability, higher log-space pre-period correlation so revenue CUPED lands).
@@ -201,8 +262,8 @@ triggers, not the same-experiment comparison.) `power.py` gained
 `required_n_triggered` (base/τ) and `required_n_itt` (base/τ², vs the
 all-trigger baseline).
 
-**Scenarios** (400k users, per-user grain, parquet; full outputs in
-`eval_data_v2_triggered/`, 20k samples in `data_v2_sample/`):
+**Scenarios** (1M users, per-user grain, parquet; full outputs in
+`eval_data_v2_triggered/`, 100k samples in `data_v2_sample/`):
 
 | Scenario | Design | Correct verdict |
 |---|---|---|
@@ -242,8 +303,8 @@ program:
   arm) is wider and a SUTVA flag fires. Documented as a sketch: clusters
   are assumed independent, no cross-cluster spillover modeled.
 
-**Scenarios** (400k users, per-user grain, parquet; full outputs in
-`eval_data_v2_interaction/`, 20k samples in `data_v2_sample/`):
+**Scenarios** (1M users, per-user grain, parquet; full outputs in
+`eval_data_v2_interaction/`, 100k samples in `data_v2_sample/`):
 
 | Scenario | Design | Correct verdict |
 |---|---|---|
@@ -270,13 +331,47 @@ at λ=3.2, re-derived in the docstring, re-verified across seeds.
 - [x] **Week 3 (eval harness)** — trap scenarios × answer keys, deterministic
       grader (`src/experiment_copilot/eval.py` + `scripts/run_eval.py`); 6/6 on
       TikTok and Reddit profiles. Still open: LLM-judge for memo quality.
-- [ ] **Week 2** — RAG corpus: 15–25 short methodology docs (SRM, peeking,
-      CUPED, guardrails, launch frameworks), written in your own words with
-      citations; local embeddings via sentence-transformers + FAISS
+- [x] **Week 2** — RAG corpus: 20 methodology notes + 25-question eval set,
+      25/25 top-3 retrieval (see above). Local embeddings/FAISS not used —
+      the v1 retriever is dependency-free keyword retrieval in
+      `evals/retrieval.py`.
+- [x] **Showroom** — 14-scenario scorecard, 14/14 verdicts at 1M, live on
+      GitHub Pages and Render (static site).
+- [x] **README polish** — this update: live demo links, 1M scale, eval table,
+      scale-recalibration notes.
 - [ ] **Week 3 (memo agent)** — LLM turns a review into a launch memo
-- [ ] **Week 4** — README polish, architecture diagram, 2-min demo video,
-      LinkedIn post: *"I built an AI that reviews A/B tests — then I built the
-      test suite that grades the AI."*
+- [ ] **LLM-judge for memo quality** — still open.
+- [ ] **2-min demo video, LinkedIn post** — still open: *"I built an AI that
+      reviews A/B tests — then I built the test suite that grades the AI."*
+
+## Methodology RAG corpus and chat-agent evals
+
+`rag/corpus.json` holds 20 original methodology summaries (11 showroom traps,
+3 design fundamentals, 6 causal-inference topics for the future study guide),
+each with key points, interview angles, citations, and linked scenarios.
+`evals/` holds 25 questions (20 methodology + 5 showroom-grounded) with gold
+corpus notes and a grading rubric. The v1 gate is retrieval coverage:
+
+```bash
+.venv/bin/python evals/run_evals.py
+# Retrieval eval: 25/25 questions retrieve a gold note in top-3
+# Top-1 accuracy: 22/25
+```
+
+The chat agent itself is not built yet — the eval set is the release bar it
+has to clear (25/25), following the same eval-first pattern as the showroom.
+
+## Deploying the showroom on Render (static site)
+
+Unlike a web app, the showroom needs no server: `docs/index.html` is
+self-contained. `render.yaml` at the repo root defines a Render **Static
+Site** publishing `docs/` with no build step — Render cannot regenerate the
+showroom, because the 1M-user data it was built from is gitignored and is
+not in the repo, so the prebuilt page is what gets published. In Render:
+New → Blueprint → select experiment-copilot → Apply. The service URL is
+https://experiment-copilot.onrender.com. Static sites do not sleep like
+free web services, so there is no wake delay. GitHub Pages remains the
+primary host; Render is the second URL, same content.
 
 ## Notes on method
 

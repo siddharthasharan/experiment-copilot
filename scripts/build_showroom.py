@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the Experiment Copilot showroom.
 
-For each of the 14 scenarios: load the 400k-user parquet + answer key,
+For each of the 14 scenarios: load the 1M-user parquet + answer key,
 run a review composition with the REAL estimators, and write
 showroom/scorecard_data.json. Then inline that JSON into a single
 self-contained showroom/index.html (no CDNs, no fetch — works from
@@ -48,7 +48,7 @@ from experiment_copilot.interaction import (  # noqa: E402
 )
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-SHOWROOM = os.path.join(ROOT, "showroom")
+SHOWROOM = os.path.join(ROOT, "docs")
 
 # --------------------------------------------------------------------------
 # helpers (copied patterns from scripts/calibrate_v2.py)
@@ -177,7 +177,7 @@ EXPECTED = {
 
 TRAP_REVEAL = {
     "clean_win": {
-        "what_happened": "A straightforward +2% engagement lift at n=400k, with CUPED cutting variance roughly in half. SRM clean, guardrails quiet, no segment disagrees.",
+        "what_happened": "A straightforward +2% engagement lift at n=1M, with CUPED cutting variance roughly in half. SRM clean, guardrails quiet, no segment disagrees.",
         "why_it_matters": "This is the control case for the whole showroom: what a shippable result looks like when the machinery works. Every other case is a deviation from this.",
     },
     "srm_trap": {
@@ -197,7 +197,7 @@ TRAP_REVEAL = {
         "why_it_matters": "Safety regressions aren't tradable against primary-metric wins. This is the veto working as designed: don't launch, fix the harm.",
     },
     "whale_variance_trap": {
-        "what_happened": "Revenue shows a significant lift, but 250 whale users ($400–800 tier) in treatment drive all of it — treatment std is ~3× control's while the median user is untouched.",
+        "what_happened": "Revenue shows a significant lift, but 625 whale users ($400–800 tier, 0.125% of the treatment arm) in treatment drive all of it — treatment std is ~3× control's while the median user is untouched.",
         "why_it_matters": "The mean is fragile: a handful of outliers, not a real effect. Same headline as a win, opposite decision. Heavy-tailed metrics need variance health checks, not just t-tests.",
     },
     "null_result": {
@@ -294,8 +294,12 @@ def review_baseline(df, key, spec_id):
                                   f"{cres.variance_reduction:.0%} using the 28-day pre-period."})
 
     # guardrail
+    # Showroom veto uses alpha=0.01 (the eval harness's documented veto bar),
+    # not check_guardrail's 0.05 default: at 1M users a true-null rare metric
+    # can hit p~0.03 on daily totals by chance, which must not veto a launch.
     gv = check_guardrail(_daily_guardrail_frame(df), variant_col="group",
-                         day_col="day", metrics=("reports",), min_lift=0.10)
+                         day_col="day", metrics=("reports",), min_lift=0.10,
+                         alpha=0.01)
     checks["guardrail_veto"] = bool(gv.veto)
     if gv.veto:
         flags.append({"severity": "veto", "text": gv.note})
@@ -329,7 +333,11 @@ def review_baseline(df, key, spec_id):
     late = _lift(df[df.enrollment_day <= 6], "engagement")
     recent = _lift(df[df.enrollment_day >= 21], "engagement")
     p_het = _hetero_z(recent, late)
-    checks["novelty"] = bool(full.significant and (not late.significant) and p_het < 0.05)
+    # Material-decay rule, not a significance gate: at 1M the long-exposure
+    # cohort's residual average lift (+1.05% in the demo seed) is significant
+    # even though it is under half the recent-cohort lift (+2.90%).
+    checks["novelty"] = bool(full.significant and p_het < 0.05
+                             and late.lift < 0.5 * recent.lift)
     if checks["novelty"]:
         flags.append({"severity": "warn",
                       "text": f"NOVELTY WARNING: lift was {recent.lift:+.1%} for recently-enrolled users "

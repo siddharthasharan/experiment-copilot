@@ -1,8 +1,8 @@
 {
   "scenario": "overlap_trap",
-  "n_users": 20000,
+  "n_users": 100000,
   "seed": 301,
-  "actual_allocation": 0.4935,
+  "actual_allocation": 0.4996,
   "true_effects": {
     "A_lift_given_B0": 0.02,
     "A_lift_given_B1": -0.005,
@@ -19,5 +19,5 @@
     "B_assignment": "independent 50/50, column exp_b",
     "trap": "pooled naive read (+0.75%, significant ~2/3 of seeds) hides the interaction"
   },
-  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+  "note": "100,000-user committed sample of the full n=1000000 run; power/adequacy figures refer to the full n."
 }

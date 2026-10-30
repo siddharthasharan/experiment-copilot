@@ -1,0 +1,35 @@
+# Experiment Copilot — Render deploy (free tier, static site)
+#
+# What this is, and what it is not:
+#   The showroom (docs/index.html) is a self-contained static page — the
+#   14-scenario scorecard is baked in at build time, with no server, no
+#   fetch, and no database. So this is a Render STATIC SITE, not a Web
+#   Service like SocialPulse's Python app. There is nothing to run, and
+#   no $PORT to bind.
+#
+# Why the build step is a no-op:
+#   The showroom is built from the 1M-user-per-scenario data by
+#   scripts/build_showroom.py, but that data is gitignored (eval_data_v2*,
+#   ~463 MB) and is NOT in the repo. Render therefore cannot regenerate
+#   the page, and must not try. The prebuilt docs/index.html already in
+#   the repo is what gets published — the same page GitHub Pages serves.
+#   If the showroom is ever rebuilt locally, push the new docs/index.html
+#   and Render redeploys it automatically.
+#
+# Cost: static sites on Render's free tier ($0). Unlike free Web Services,
+# static sites do not sleep, so there is no wake delay on first load.
+#
+# Security note: this page has no login. Anyone with the Render URL can
+# view the showroom. That is acceptable for synthetic demo data, and it
+# is why no real data ever goes here. Do not put real user data,
+# credentials, or internal data in this repo or on this service.
+#
+# How to use it: sync this file to the repo root, push, then in Render:
+#   New -> Blueprint -> select experiment-copilot -> Apply.
+# Full steps and verification: docs/render-deploy.md
+
+services:
+  - type: static
+    name: experiment-copilot
+    buildCommand: "echo static-site-no-build"
+    staticPublishPath: docs

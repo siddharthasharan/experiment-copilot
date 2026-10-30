@@ -1,6 +1,6 @@
 """
 Step-3 scenarios: overlapping experiments, segment HTE (mirage and real),
-and a network-interference sketch. 400k users/scenario, per-user grain,
+and a network-interference sketch. 1M users/scenario, per-user grain,
 parquet — same metric design as the v2 baseline (lognormal engagement,
 CV~=1, 28d pre-period for realism; engagement is the working metric here).
 
@@ -294,7 +294,7 @@ def write_scenario(spec: InteractionScenario, outdir: str,
                           index=False)
         key = dict(exp.ground_truth)
         key["n_users"] = sample_n
-        key["note"] = (f"20k-user committed sample of the full n={spec.n_users} "
+        key["note"] = (f"{sample_n:,}-user committed sample of the full n={spec.n_users} "
                        "run; power/adequacy figures refer to the full n.")
         with open(os.path.join(sample_dir, f"{spec.name}.experiment.json"), "w") as f:
             json.dump(key, f, indent=2)
@@ -307,7 +307,7 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=N_USERS)
     ap.add_argument("--seed-offset", type=int, default=0)
     ap.add_argument("--outdir", default="eval_data_v2_interaction")
-    ap.add_argument("--sample-n", type=int, default=20_000)
+    ap.add_argument("--sample-n", type=int, default=100_000)
     ap.add_argument("--sample-dir", default="data_v2_sample")
     args = ap.parse_args()
 

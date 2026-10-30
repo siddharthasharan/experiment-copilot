@@ -3,7 +3,7 @@ Step-2 scenarios: triggered vs assigned populations (ITT vs CACE).
 
 Built on top of the v2 baseline generator — same metrics, same 28-day
 pre-period, same per-user grain — plus a ``triggered`` flag and
-triggered-only effects. Three scenarios, uniform n=400k:
+triggered-only effects. Three scenarios, uniform n=1M:
 
   dilution_trap: +2.5% engagement lift on TRIGGERED ONLY, trigger rate
     ~18% (heterogeneous by tenure). ITT is diluted to ~tau*CACE and
@@ -208,7 +208,7 @@ def write_triggered_scenario(spec: TriggeredScenario, outdir: str,
                           index=False)
         key = dict(exp.ground_truth)
         key["n_users"] = sample_n
-        key["note"] = (f"20k-user committed sample of the full n={spec.n_users} "
+        key["note"] = (f"{sample_n:,}-user committed sample of the full n={spec.n_users} "
                        "run; power adequacy figures refer to the full n.")
         with open(os.path.join(sample_dir, f"{spec.name}.experiment.json"),
                   "w") as f:
@@ -222,7 +222,7 @@ def main() -> None:
     ap.add_argument("--n", type=int, default=N_USERS)
     ap.add_argument("--seed-offset", type=int, default=0)
     ap.add_argument("--outdir", default=TRIGGERED_OUTDIR)
-    ap.add_argument("--sample-n", type=int, default=20_000)
+    ap.add_argument("--sample-n", type=int, default=100_000)
     ap.add_argument("--sample-dir", default="data_v2_sample")
     args = ap.parse_args()
 

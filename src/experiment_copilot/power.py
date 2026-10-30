@@ -100,7 +100,7 @@ def achieved_power_binary(n_per_arm: float, base_rate: float,
     return float(sstats.norm.cdf(ncp - z_alpha))
 
 
-def size_scenario(n_total: int = 400_000, cuped_r2: float = 0.55) -> str:
+def size_scenario(n_total: int = 1_000_000, cuped_r2: float = 0.55) -> str:
     """Print the v2 power table: what each baseline metric needs vs the
     chosen uniform n, and whether CUPED makes it adequate."""
     rows = [
@@ -114,8 +114,9 @@ def size_scenario(n_total: int = 400_000, cuped_r2: float = 0.55) -> str:
     lines.append(f"Power design: n_total={n_total:,} ({n_arm:,.0f}/arm), "
                  f"alpha=0.05 two-sided, target power=0.80, CUPED R^2={cuped_r2}")
     lines.append("-" * 96)
+    _tag = f"{n_arm/1000:,.0f}k"
     lines.append(f"{'metric':<18}{'MDE':>8}{'n/arm raw':>12}{'n/arm CUPED':>12}"
-                 f"{'power@400k':>12}{'power@400k+CUPED':>16}")
+                 f"{'power@'+_tag:>12}{'power@'+_tag+'+CUPED':>16}")
     lines.append("-" * 96)
     for name, kind, kw in rows:
         lift = kw["lift"]
@@ -133,7 +134,7 @@ def size_scenario(n_total: int = 400_000, cuped_r2: float = 0.55) -> str:
         lines.append(f"{name:<18}{mde:>8}{need:>12,.0f}{need_c:>12,.0f}"
                      f"{pw:>12.2f}{pw_c:>16.2f}")
     lines.append("-" * 96)
-    lines.append("Read: revenue +2% is underpowered raw at 400k (needs CUPED); "
+    lines.append("Read: revenue +2% is powered raw at 1M (CUPED still helps); "
                  "reports +35% is the volume driver among binary metrics.")
     return "\n".join(lines)
 

@@ -1,8 +1,8 @@
 {
   "scenario": "hte_real",
-  "n_users": 20000,
+  "n_users": 100000,
   "seed": 303,
-  "actual_allocation": 0.5041,
+  "actual_allocation": 0.4999,
   "true_effects": {
     "lift_new_segment": 0.04,
     "lift_other_segments": 0.01,
@@ -18,5 +18,5 @@
     "n_segments": 13,
     "prespecified_segment": "new (~30% of users)"
   },
-  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+  "note": "100,000-user committed sample of the full n=1000000 run; power/adequacy figures refer to the full n."
 }

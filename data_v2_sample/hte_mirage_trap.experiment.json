@@ -1,8 +1,8 @@
 {
   "scenario": "hte_mirage_trap",
-  "n_users": 20000,
+  "n_users": 100000,
   "seed": 302,
-  "actual_allocation": 0.5006,
+  "actual_allocation": 0.4995,
   "true_effects": {
     "lift_all_segments": 0.02,
     "heterogeneity": 0.0
@@ -17,5 +17,5 @@
     "n_segments": 13,
     "trap": "~half the seeds show a raw nominal segment deviation by chance \u2014 the mirage BH must kill"
   },
-  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+  "note": "100,000-user committed sample of the full n=1000000 run; power/adequacy figures refer to the full n."
 }

@@ -1,8 +1,8 @@
 {
   "scenario": "interference_sketch",
-  "n_users": 20000,
+  "n_users": 100000,
   "seed": 304,
-  "actual_allocation": 0.4965,
+  "actual_allocation": 0.4998,
   "true_effects": {
     "direct_lift": 0.02,
     "spillover_lambda": 3.2,
@@ -19,5 +19,5 @@
     "randomization": "user-level (not clustered)",
     "lambda_note": "3.2 is deliberately exaggerated for visibility and demeaned so it adds no level shift; SE inflation ~= 1 + (m/2-1)*rho with rho ~= (lambda*100*0.5/sqrt(m)/sigma)^2, sigma ~= 143 -> ratio ~1.28; real spillovers are subtler and invisible"
   },
-  "note": "20k-user committed sample of the full n=20000 run; power/adequacy figures refer to the full n."
+  "note": "100,000-user committed sample of the full n=1000000 run; power/adequacy figures refer to the full n."
 }
