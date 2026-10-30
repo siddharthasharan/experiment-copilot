@@ -129,7 +129,7 @@ SCENARIOS = [
      "Engagement is up — but user reports are up ~35%. Safety vetoes the launch.",
      ["guardrail"], "eval_data_v2", "engagement"),
     ("whale_variance_trap", "baseline", "Whale variance",
-     "A significant revenue 'win' driven entirely by 250 whale users. The mean is fragile.",
+     "A significant revenue 'win' driven entirely by 625 whale users. The mean is fragile.",
      ["variance", "whales"], "eval_data_v2", "revenue"),
     ("null_result", "baseline", "True null",
      "No effect. A well-powered no — not an underpowered maybe.",
@@ -596,6 +596,41 @@ def main():
     return payload, all_ok
 
 
+
+# Per-scenario next steps for the chat agent. The launch call itself is
+# derived from the scenario verdict in JS; these are the actions that
+# follow it. No numbers here are computed — they restate the trap design.
+CHAT_NEXT_STEPS = {
+    "clean_win": ["Ship it; the result is powered, SRM-clean and guardrails are quiet.",
+                  "Keep guardrails monitored post-launch; no further analysis is required for this decision."],
+    "srm_trap": ["Do not trust any lift from this run — randomization itself is broken.",
+                 "Find and fix the assignment or logging bug, then re-randomize and re-run."],
+    "peeking_trap": ["Do not ship on an interim look — the early significance did not survive the full sample.",
+                     "Wait for the pre-committed horizon, and pre-register the number of looks next time (or use a sequential method)."],
+    "novelty_decay_trap": ["Do not annualize the early lift — it decays as users get used to the change.",
+                           "Extend the run past the novelty window and decide on the steady-state effect."],
+    "guardrail_violation_trap": ["Do not ship — a guardrail veto overrides a primary-metric win.",
+                                  "Find what is driving the reports increase, fix the harm, and re-test."],
+    "whale_variance_trap": ["Do not ship the headline mean alone — 625 whale users drive it and the median user is untouched.",
+                            "Report the median and a winsorized sensitivity check alongside the mean, and investigate the whales separately."],
+    "null_result": ["Do not ship — there is no credible positive effect here.",
+                    "Close the idea, or redesign for a larger effect or a more sensitive primary metric."],
+    "dilution_trap": ["Ship for the triggered users — the triggered effect is real; the diluted ITT understates it.",
+                      "Size the rollout impact as triggered effect x trigger rate, and measure ITT in the rollout."],
+    "trigger_imbalance_trap": ["Fall back to ITT — the triggered comparison is biased because treatment changed who triggers.",
+                               "Fix triggering so treatment cannot boost it, then re-run."],
+    "triggered_clean_win": ["Ship it — ITT and CACE agree here, and the triggered read is clean.",
+                            "Size the rollout impact as triggered effect x trigger rate."],
+    "overlap_trap": ["Do not ship the pooled average — it mixes two different B arms.",
+                    "Stratify by the B assignment and decide per B arm."],
+    "hte_mirage_trap": ["Ship the overall +2% if the decision is overall — but do not ship the segment story.",
+                        "Pre-specify segments and correct for multiple comparisons next time."],
+    "hte_real": ["Ship overall, and measure the new-user segment separately — it genuinely responds more.",
+                 "Consider a segment-specific rollout, with the segment effect re-measured, not assumed."],
+    "interference_sketch": ["Treat the naive precision as overstated — outcomes leak across cluster-mates.",
+                            "Use cluster-robust SEs for the decision, and consider cluster randomization next time."],
+}
+
 HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -674,6 +709,25 @@ tr:last-child td{border-bottom:none}
 footer{border-top:1px solid var(--line);padding:18px 28px;color:var(--muted);
   font-size:12.5px;background:#fff}
 h3.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px}
+
+.chat-open-btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600}
+body.chat-only .layout, body.chat-only footer{display:none}
+#chatview{display:none;flex-direction:column;height:100vh;background:#fff}
+body.chat-only #chatview{display:flex}
+.chat-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 20px;border-bottom:1px solid var(--line)}
+.chat-head strong{font-size:16px}
+.chat-head .hint{color:var(--muted);font-size:12.5px}
+.chat-head button{margin-left:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer}
+.chat-head button + button{margin-left:0}
+#chatlog{flex:1;overflow-y:auto;padding:20px;max-width:900px;width:100%;margin:0 auto}
+.bubble{border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:10px 0;background:#fff}
+.bubble.user{background:var(--info-bg);border-color:#c3d4fb;margin-left:60px}
+.bubble.assistant{margin-right:60px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 14px}
+.chips button{background:var(--bg);border:1px solid var(--line);border-radius:20px;padding:5px 12px;cursor:pointer}
+.chat-input-row{border-top:1px solid var(--line);padding:12px 16px;display:flex;gap:8px}
+.chat-input-row input{flex:1;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:14px}
+.chat-input-row button{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 18px;cursor:pointer;font-weight:600}
 @media(max-width:900px){.layout{flex-direction:column}aside{width:100%;position:static;max-height:none}}
 </style>
 </head>
@@ -684,16 +738,26 @@ h3.sec{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--
   checklist a product data scientist runs: SRM, guardrails, variance health, peeking, novelty,
   triggering, overlap, heterogeneity, interference. Every trap below is deliberate.
   &nbsp;<a href="https://github.com/siddharthasharan/experiment-copilot">github.com/siddharthasharan/experiment-copilot</a></p>
+  <div style="margin-top:10px"><button id="openchat" class="chat-open-btn">Chat &mdash; ask about a scenario</button></div>
 </header>
 <div class="layout">
   <aside id="sidebar"></aside>
   <main id="main"></main>
+</div>
+<div id="chatview">
+  <div class="chat-head"><strong>Experiment Copilot chat &mdash; multi-turn assistant</strong>
+  <span class="hint">Deterministic: answers come from the scorecard data and the methodology corpus, never invented.</span>
+  <button id="chatnew">New chat</button><button id="chatback">Show scorecard</button></div>
+  <div id="chatlog"></div>
+  <div class="chat-input-row"><input id="chatq" placeholder="Ask about a scenario, e.g. Review the whale trap"><button id="chatsend">Send</button></div>
 </div>
 <footer>Synthetic data with known ground truth — every trap is deliberate. Lifts are relative;
 CIs are 95% Welch's t; p-values two-sided unless noted.</footer>
 <script>
 "use strict";
 const DATA = /*__SHOWROOM_DATA__*/null;
+const CORPUS = /*__CORPUS_DATA__*/[];
+const CHAT_NEXT_STEPS = /*__CHAT_NEXT_STEPS__*/{};
 
 const TRACK_LABELS = {baseline:"Baseline metrics", triggered:"Triggered analysis", interaction:"Interaction effects"};
 
@@ -798,6 +862,7 @@ function renderCase(id){
   const vtitle = DATA.verdict_legend[s.verdict] || "";
   let h = `<div class="card"><div class="case-head"><h2>${esc(s.title)}</h2>`
         + `<span class="badge ${s.verdict}" title="${esc(vtitle)}">${vlabel}</span></div>`
+        + `<div style="margin:6px 0"><button onclick="openChatWith(\'${s.id}\')" class="chat-open-btn">Chat about this scenario</button></div>`
         + `<p class="desc">${esc(s.description)}</p>`
         + `<p class="desc" style="margin-top:6px">n=${s.n_users.toLocaleString()} users · expected answer-key verdict: <code>${esc(s.expected_verdict_raw)}</code></p></div>`;
   h += `<div class="card"><h3 class="sec">Metrics</h3>${metricTable(s.metrics)}</div>`;
@@ -828,10 +893,226 @@ function renderCase(id){
   window.scrollTo(0,0);
 }
 
+/* ---- Chat: deterministic, no LLM. Results from DATA, methodology from CORPUS. ---- */
+const CHAT_STOP = new Set("the and for with that this from into per are was has have will would should could such than then when what which your you our its they them their about under over between both each more most also only just like how why not but all any can may does did were been being who whom whose there here had his her him she".split(" "));
+function chatTokens(text){
+  const out = new Set();
+  for(const m of String(text).toLowerCase().matchAll(/[a-z0-9]+/g)){
+    const w = m[0];
+    if(w.length > 2 && !CHAT_STOP.has(w)) out.add(w);
+  }
+  return out;
+}
+function chatFindScenario(text){
+  const low = String(text).toLowerCase();
+  const aliases = [
+    ["whale", "whale_variance_trap"], ["peek", "peeking_trap"],
+    ["srm", "srm_trap"], ["ratio mismatch", "srm_trap"],
+    ["novelty", "novelty_decay_trap"], ["primacy", "novelty_decay_trap"],
+    ["guardrail", "guardrail_violation_trap"], ["dilution", "dilution_trap"],
+    ["imbalance", "trigger_imbalance_trap"], ["spillover", "interference_sketch"],
+    ["sutva", "interference_sketch"], ["overlap", "overlap_trap"],
+    ["segment mirage", "hte_mirage_trap"], ["real heterogeneity", "hte_real"],
+    ["heterogeneity", "hte_real"], ["triggered clean", "triggered_clean_win"],
+    ["clean win", "clean_win"], ["null result", "null_result"], ["true null", "null_result"],
+  ];
+  for(const pair of aliases){ if(low.indexOf(pair[0]) >= 0) return DATA.scenarios.find(function(s){ return s.id === pair[1]; }); }
+  const qt = chatTokens(low);
+  let best = null, bestScore = 0, tie = false;
+  for(const s of DATA.scenarios){
+    const titleT = chatTokens(s.title);
+    const idT = new Set(s.id.split("_"));
+    let sc = 0;
+    for(const w of qt){ if(titleT.has(w)) sc += 2; if(idT.has(w)) sc += 3; if(s.trap_tags.indexOf(w) >= 0) sc += 2; }
+    if(sc > bestScore){ best = s; bestScore = sc; tie = false; }
+    else if(sc === bestScore && sc > 0){ tie = true; }
+  }
+  return tie ? null : best;
+}
+function chatRetrieve(query){
+  const qt = chatTokens(query);
+  const scored = [];
+  for(const note of CORPUS){
+    const kw = new Set();
+    for(const k of note.keywords){ for(const w of chatTokens(k)) kw.add(w); }
+    const titleT = chatTokens(note.title);
+    const bodyT = chatTokens(note.summary + " " + note.key_points.join(" ") + " " + note.interview_angle);
+    let sc = 0;
+    for(const w of qt){ if(kw.has(w)) sc += 3; if(titleT.has(w)) sc += 2; if(bodyT.has(w)) sc += 1; }
+    if(sc > 0) scored.push([note, sc]);
+  }
+  scored.sort(function(a, b){ return b[1] - a[1]; });
+  return scored.slice(0, 3).map(function(p){ return p[0]; });
+}
+let chatScenario = null;
+function chatVerdictLabel(v){ return {LAUNCH: "LAUNCH", DONT_LAUNCH: "DON'T LAUNCH", INCONCLUSIVE: "INCONCLUSIVE", INVALID: "INVALID"}[v] || v; }
+function chatCall(v){
+  if(v === "LAUNCH") return "Ship it.";
+  if(v === "DONT_LAUNCH") return "Don't ship.";
+  if(v === "INVALID") return "Throw this run out — do not decide on it.";
+  return "Don't decide yet — investigate first.";
+}
+function chatInitialHTML(){
+  let h = "<p><strong>Hi — here are the scenarios you can ask about.</strong> Pick one, or type a question like <em>Review the whale trap</em>, <em>Should we launch clean_win?</em>, or <em>What is SRM?</em></p>";
+  for(const tr of ["baseline", "triggered", "interaction"]){
+    h += "<p><strong>" + esc(TRACK_LABELS[tr]) + ":</strong></p><ul>";
+    for(const s of DATA.scenarios.filter(function(x){ return x.track === tr; })){
+      h += "<li>" + esc(s.title) + "</li>";
+    }
+    h += "</ul>";
+  }
+  h += "<p>Every review shows the real scorecard numbers for that scenario, then a diagnosis, a recommendation with next steps, and a PM/Eng brief — in that order, one turn at a time.</p>";
+  return h;
+}
+function chatInitialChips(){
+  return DATA.scenarios.map(function(s){ return "Review the " + s.title; });
+}
+function chatReviewHTML(s){
+  let h = '<p><strong>' + esc(s.title) + '</strong> <span class="badge ' + s.verdict + '">' + chatVerdictLabel(s.verdict) + '</span></p>';
+  h += "<p>" + esc(s.description) + " · n=" + s.n_users.toLocaleString() + " users · expected answer-key verdict: <code>" + esc(s.expected_verdict_raw) + "</code></p>";
+  h += metricTable(s.metrics);
+  if(s.flags && s.flags.length){
+    h += "<p><strong>Reviewer flags:</strong></p><ul>";
+    for(const f of s.flags) h += "<li>" + esc(f.text) + "</li>";
+    h += "</ul>";
+  }
+  return h;
+}
+function chatDiagnosisHTML(s){
+  let h = "<p><strong>Diagnosis — " + esc(s.title) + ".</strong></p>";
+  h += "<p>" + esc(s.trap_reveal.what_happened) + "</p>";
+  h += "<p><strong>Why it matters:</strong> " + esc(s.trap_reveal.why_it_matters) + "</p>";
+  return h;
+}
+function chatRecommendationHTML(s){
+  const steps = CHAT_NEXT_STEPS[s.id] || [];
+  let h = "<p><strong>Recommendation — " + esc(s.title) + ": " + chatCall(s.verdict) + "</strong></p>";
+  h += "<p><strong>Next steps:</strong></p><ol>";
+  for(const st of steps) h += "<li>" + esc(st) + "</li>";
+  h += "</ol>";
+  return h;
+}
+function chatBriefHTML(s){
+  const steps = CHAT_NEXT_STEPS[s.id] || [];
+  const first = s.metrics[0];
+  let h = "<p><strong>PM/Eng brief — " + esc(s.title) + ".</strong></p>";
+  h += "<p>Verdict: " + chatVerdictLabel(s.verdict) + ". " + esc(s.description);
+  if(first) h += " Headline metric " + esc(first.display_name) + " moved " + fmtPct(first.lift_pct) + " (p=" + fmtP(first.p_value) + ").";
+  h += " Recommendation: " + chatCall(s.verdict) + "</p>";
+  if(steps.length) h += "<p>Next step: " + esc(steps[0]) + "</p>";
+  return h;
+}
+function chatClarificationHTML(){
+  let h = "<p>I can't answer that from the showroom data or the methodology corpus, so I won't guess. Ask about one of the scenarios, or a methodology topic covered in the corpus — for example:</p>";
+  h += "<ul><li>Review the peeker's mirage</li><li>Should we launch clean_win?</li><li>Why is the whale variance trap inconclusive?</li><li>What is SRM?</li></ul>";
+  return h;
+}
+function chatHandle(text){
+  const low = String(text).toLowerCase();
+  if(/^(new chat|restart|start over)\b/.test(low)) return {html: chatInitialHTML(), chips: chatInitialChips()};
+  if(low.indexOf("list") >= 0 && low.indexOf("scenario") >= 0) return {html: chatInitialHTML(), chips: chatInitialChips()};
+  if(/^(what is|what does|how |define |explain what)/.test(low)){
+    const qnotes = chatRetrieve(text);
+    if(qnotes.length){
+      const n = qnotes[0];
+      let h = "<p><strong>" + esc(n.title) + "</strong> (from the methodology corpus)</p>";
+      h += "<p>" + esc(n.summary) + "</p><ul>";
+      for(const kp of n.key_points) h += "<li>" + esc(kp) + "</li>";
+      h += "</ul>";
+      if(n.citations && n.citations.length) h += "<p><em>Sources: " + esc(n.citations.join("; ")) + "</em></p>";
+      const chips = [];
+      if(n.related_scenarios && n.related_scenarios.length){
+        const rel = DATA.scenarios.find(function(x){ return x.id === n.related_scenarios[0]; });
+        if(rel) chips.push("Review the " + rel.title);
+      }
+      return {html: h, chips: chips};
+    }
+  }
+  if(chatScenario && (low.indexOf("brief") >= 0 || low.indexOf("talking points") >= 0)){
+    return {html: chatBriefHTML(chatScenario), chips: ["Another scenario"]};
+  }
+  if(chatScenario && (low.indexOf("recommend") >= 0 || low.indexOf("should we launch") >= 0 || low.indexOf("should i launch") >= 0 || low.indexOf("next step") >= 0 || low.indexOf("what next") >= 0 || low.indexOf("what should we do") >= 0)){
+    return {html: chatRecommendationHTML(chatScenario), chips: ["PM/Eng brief", "Another scenario"]};
+  }
+  if(chatScenario && (low.indexOf("why") >= 0 || low.indexOf("diagnos") >= 0 || low.indexOf("what happened") >= 0 || low.indexOf("what went wrong") >= 0 || low.indexOf("explain") >= 0)){
+    return {html: chatDiagnosisHTML(chatScenario), chips: ["Recommendation and next steps", "PM/Eng brief"]};
+  }
+  if(low.indexOf("another scenario") >= 0) return {html: chatInitialHTML(), chips: chatInitialChips()};
+  const s = chatFindScenario(text);
+  if(s){
+    chatScenario = s;
+    return {html: chatReviewHTML(s), chips: ["Diagnosis", "Recommendation and next steps", "PM/Eng brief", "Another scenario"]};
+  }
+  const notes = chatRetrieve(text);
+  if(notes.length){
+    const n = notes[0];
+    let h = "<p><strong>" + esc(n.title) + "</strong> (from the methodology corpus)</p>";
+    h += "<p>" + esc(n.summary) + "</p><ul>";
+    for(const kp of n.key_points) h += "<li>" + esc(kp) + "</li>";
+    h += "</ul>";
+    if(n.citations && n.citations.length) h += "<p><em>Sources: " + esc(n.citations.join("; ")) + "</em></p>";
+    const chips = [];
+    if(n.related_scenarios && n.related_scenarios.length){
+      const rel = DATA.scenarios.find(function(x){ return x.id === n.related_scenarios[0]; });
+      if(rel) chips.push("Review the " + rel.title);
+    }
+    return {html: h, chips: chips};
+  }
+  return {html: chatClarificationHTML(), chips: chatInitialChips().slice(0, 4)};
+}
+function chatAppendUser(text){
+  const log = document.getElementById("chatlog");
+  log.innerHTML += "<div class='bubble user'>" + esc(text) + "</div>";
+}
+function chatAppendAssistant(html, chips){
+  const log = document.getElementById("chatlog");
+  let h = "<div class='bubble assistant'>" + html + "</div>";
+  if(chips && chips.length){
+    h += "<div class='chips'>";
+    for(const c of chips) h += "<button data-q='" + esc(c).replace(/'/g, "&#39;") + "'>" + esc(c) + "</button>";
+    h += "</div>";
+  }
+  log.innerHTML += h;
+  log.scrollTop = log.scrollHeight;
+}
+function chatSend(text){
+  text = String(text || "").trim();
+  if(!text) return;
+  chatAppendUser(text);
+  const r = chatHandle(text);
+  if(/^(new chat|restart|start over)\b/.test(text.toLowerCase())){ chatScenario = null; document.getElementById("chatlog").innerHTML = ""; }
+  chatAppendAssistant(r.html, r.chips);
+}
+function chatReset(){
+  chatScenario = null;
+  const log = document.getElementById("chatlog");
+  log.innerHTML = "";
+  chatAppendAssistant(chatInitialHTML(), chatInitialChips());
+}
+function showChat(){
+  document.body.classList.add("chat-only");
+  if(!document.getElementById("chatlog").innerHTML) chatReset();
+}
+function openChatWith(id){
+  const s = DATA.scenarios.find(function(x){ return x.id === id; });
+  if(!s) return;
+  showChat();
+  chatSend("Review the " + s.title);
+}
+if(typeof window !== "undefined"){
+  window.ChatTest = {handle: chatHandle, initial: chatInitialHTML, findScenario: chatFindScenario, retrieve: chatRetrieve, reset: function(){ chatScenario = null; }};
+}
+
 document.addEventListener("DOMContentLoaded", ()=>{
   if(!DATA){ document.getElementById("main").innerHTML = "<div class='card'>No data inlined.</div>"; return; }
   renderSidebar();
   renderCase(DATA.scenarios[0].id);
+  const oc = document.getElementById("openchat"); if(oc) oc.addEventListener("click", showChat);
+  const cb = document.getElementById("chatback"); if(cb) cb.addEventListener("click", ()=>{ document.body.classList.remove("chat-only"); });
+  const cn = document.getElementById("chatnew"); if(cn) cn.addEventListener("click", chatReset);
+  const cs = document.getElementById("chatsend"); if(cs) cs.addEventListener("click", ()=>{ const q = document.getElementById("chatq"); chatSend(q.value); q.value = ""; });
+  const q = document.getElementById("chatq"); if(q) q.addEventListener("keydown", (e)=>{ if(e.key === "Enter"){ chatSend(q.value); q.value = ""; } });
+  const log = document.getElementById("chatlog"); if(log) log.addEventListener("click", (e)=>{ const b = e.target.closest ? e.target.closest("button[data-q]") : null; if(b) chatSend(b.dataset.q); });
 });
 </script>
 </body>
@@ -843,6 +1124,15 @@ def build_html(payload: dict):
     # guard against </script> inside strings
     json_str = json_str.replace("</", "<\\/")
     html = HTML_TEMPLATE.replace("/*__SHOWROOM_DATA__*/null", json_str)
+    corpus_path = os.path.join(ROOT, "rag", "corpus.json")
+    notes = []
+    if os.path.exists(corpus_path):
+        with open(corpus_path) as f:
+            notes = json.load(f)["notes"]
+    corpus_str = json.dumps(notes, separators=(",", ":")).replace("</", "<\\/")
+    html = html.replace("/*__CORPUS_DATA__*/[]", corpus_str)
+    steps_str = json.dumps(CHAT_NEXT_STEPS, separators=(",", ":")).replace("</", "<\\/")
+    html = html.replace("/*__CHAT_NEXT_STEPS__*/{}", steps_str)
     path = os.path.join(SHOWROOM, "index.html")
     with open(path, "w") as f:
         f.write(html)

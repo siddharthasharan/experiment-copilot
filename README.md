@@ -12,6 +12,19 @@ The showroom is a self-contained static page: 14 scenarios, each reviewed with
 the real stats estimators, with the trap revealed at the end. No login, no
 server, no data leaves your browser — the numbers are baked in at build time.
 
+## Chat — turn-by-turn, like SocialPulse
+
+The showroom now has a full-screen chat (header button **Chat — ask about a scenario**,
+or **Chat about this scenario** on any case view). A new chat opens with the full
+list of 14 scenarios, grouped by track, then walks one turn at a time: **review**
+(real scorecard numbers for that scenario) → **diagnosis** (what trap fired, with
+evidence) → **recommendation + next steps** (launch call from the verdict, plus
+concrete actions) → **PM/Eng brief** (copyable summary). Methodology questions
+(`What is SRM?`) are answered from the RAG corpus, cited, with no LLM, no server
+and no API key — the chat is deterministic JavaScript in the static page, and it
+clarifies instead of inventing when a question matches nothing. See
+`docs/chat.md`, and the turn tests in `tests/test_chat_showroom.js`.
+
 ## Scale at a glance
 
 | | Before | Now |
