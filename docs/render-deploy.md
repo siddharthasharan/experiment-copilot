@@ -7,14 +7,21 @@
 Render serves that file as-is. It does not run Python, does not generate
 data, and does not need the gitignored `eval_data_v2*` folders.
 
-## Steps
+## Steps (manual — do NOT use Blueprint)
 
-1. Sync `render.yaml` (repo root) and the updated `docs/` to GitHub and push
-   to `main`.
-2. In Render: **New → Blueprint**, select the `experiment-copilot` repo,
-   click **Apply**. Render creates a Static Site named `experiment-copilot`.
-3. Wait for the deploy status to go **Live**.
-4. Open https://experiment-copilot.onrender.com and check:
+Render Blueprints do not support static sites: a `render.yaml` with
+`type: static` is rejected with "unknown type 'static'". There is
+intentionally no `render.yaml` in this repo. Create the site manually:
+
+1. In Render: **New → Static Site** (not Blueprint).
+2. Connect the `experiment-copilot` repo, branch `main`.
+3. Name: `experiment-copilot`.
+4. Build Command: leave blank (there is nothing to build — `docs/` is
+   prebuilt).
+5. Publish Directory: `docs`.
+6. Click **Create Static Site** and wait for the deploy to go Live.
+7. Open the URL Render assigns (expected
+   https://experiment-copilot-vzzk.onrender.com) and check:
    - The showroom loads with 14 scenarios in the sidebar.
    - The first scenario (`clean_win`) shows verdict LAUNCH.
    - `novelty_decay_trap` shows INCONCLUSIVE and `whale_variance_trap`

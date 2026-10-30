@@ -6,7 +6,7 @@ on whether it catches the traps.
 ## Live demo
 
 - **Showroom (GitHub Pages):** https://siddharthasharan.github.io/experiment-copilot/
-- **Showroom (Render, static site):** https://experiment-copilot.onrender.com
+- **Showroom (Render, static site):** https://experiment-copilot-vzzk.onrender.com
 
 The showroom is a self-contained static page: 14 scenarios, each reviewed with
 the real stats estimators, with the trap revealed at the end. No login, no
@@ -364,12 +364,15 @@ has to clear (25/25), following the same eval-first pattern as the showroom.
 ## Deploying the showroom on Render (static site)
 
 Unlike a web app, the showroom needs no server: `docs/index.html` is
-self-contained. `render.yaml` at the repo root defines a Render **Static
-Site** publishing `docs/` with no build step — Render cannot regenerate the
-showroom, because the 1M-user data it was built from is gitignored and is
-not in the repo, so the prebuilt page is what gets published. In Render:
-New → Blueprint → select experiment-copilot → Apply. The service URL is
-https://experiment-copilot.onrender.com. Static sites do not sleep like
+self-contained. On Render it is a **Static Site** publishing `docs/` with
+no build step — Render cannot regenerate the showroom, because the 1M-user
+data it was built from is gitignored and is not in the repo, so the
+prebuilt page is what gets published. Create it manually in Render
+(New → Static Site, repo experiment-copilot, Publish Directory `docs`) —
+Render Blueprints do **not** support static sites, so a `render.yaml` with
+`type: static` is rejected with "unknown type 'static'" and must not be
+used here. The service URL is https://experiment-copilot-vzzk.onrender.com
+(or whatever Render assigns). Static sites do not sleep like
 free web services, so there is no wake delay. GitHub Pages remains the
 primary host; Render is the second URL, same content.
 
