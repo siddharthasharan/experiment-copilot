@@ -194,6 +194,40 @@ def driver_availability(df, result, scenario_id):
                     f"that supply cost — more orders at slower delivery is not a clean win."}
 
 
+def tier_shares(df, result, scenario_id):
+    """Crowding-out answer: tier shares by arm, with the interpretation
+    stated from the numbers, not assumed. Only the crowding-out
+    scenario has tier columns; everything else gets an honest refusal."""
+    if scenario_id != "linkedin_creator_crowding_out":
+        return {"supported": False, "text": "Tier shares only exist for the creator crowding-out experiment; this experiment has no creator tiers."}
+    tr = df["group"] == "treatment"
+    tiers = [("small creators (1,000-10,000 followers)", "post_small_share_pct"),
+             ("mid creators (10,000-100,000 followers)", "post_mid_share_pct"),
+             ("top creators (100,000+ followers)", "post_top_share_pct")]
+    rows = []
+    for label, col in tiers:
+        c, t = float(df.loc[~tr, col].mean()), float(df.loc[tr, col].mean())
+        rows.append((label, c, t, t - c))
+    lines = "; ".join(f"{label}: control {c:.1f}% vs treatment {t:.1f}% ({d:+.1f}pp)" for label, c, t, d in rows)
+    small_d = rows[0][3]
+    top_d = rows[2][3]
+    total = result.get("total", {})
+    total_lift = total.get("lift_pct", 0.0) if total else 0.0
+    if small_d < 0 and top_d > 0:
+        verdict = (f"That is crowding-out: total creator sessions rose {total_lift:+.1f}%, but the "
+                   f"small tier's share fell while the top tier's share rose — the gain went to top creators.")
+    elif small_d > 0:
+        verdict = ("That is surfacing, not crowding-out: the small tier's share rose, so small creators "
+                   "gained exposure from this ranking.")
+    else:
+        verdict = ("No clear crowding-out verdict from shares alone: the small tier's share did not move "
+                   "in a single direction against the top tier.")
+    return {"supported": True, "tiers": rows,
+            "text": f"By arm, share of creator sessions: {lines}. {verdict} "
+                    f"Remember the unit: this is viewer exposure (randomized at viewer level), not creator "
+                    f"earnings — it shows what viewers saw, not what any individual creator gained or lost."}
+
+
 def publisher_best(df, result, scenario_id):
     # Any scenario whose result carries publisher shares (Pharma flagship
     # and cross-publisher) gets the descriptive answer with the caveat;

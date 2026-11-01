@@ -164,6 +164,8 @@ def build_scorecard(config, result, trend, seed):
     if result["unit"] == "DMAs":
         watchouts.append("Claims reporting delay: post-period starts are completeness-adjusted. If completeness differs by arm, the adjustment itself can bias the result — check the claims-completeness guardrail.")
         watchouts.append("Publisher attribution: this design cannot identify individual publisher causal effects. Publisher figures are descriptive delivery shares only.")
+    if config.get("id") == "linkedin_creator_crowding_out":
+        watchouts.append("Exposure, not creator outcomes: randomization is at viewer level, so this measures what viewers saw (tier shares of sessions), not what creators earned or whether a specific creator was harmed. A creator-level claim would need creator randomization.")
     watchouts.append("Statistical power: a non-significant result is not proof of no effect — check the confidence interval width, not just the p-value.")
     watchouts.append("Novelty: early-period effects can decay. The trend chart shows whether the effect holds across the run.")
     return {

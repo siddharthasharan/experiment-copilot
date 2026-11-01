@@ -82,6 +82,24 @@ FLAGSHIP_CONFIGS = {
 }
 
 FLAGSHIP_CONFIGS.update({
+    "linkedin_creator_crowding_out": {
+        "id": "linkedin_creator_crowding_out", "industry": "social",
+        "title": "LinkedIn creator crowding-out: top creators vs small creators",
+        "name": "LinkedIn creator crowding-out experiment",
+        "hypothesis": "A new creator ranking will change what viewers see — the question is whether top creators (100,000+ followers) crowd out small creators (1,000-10,000 followers), or whether small creators gain share.",
+        "treatment": "New creator ranking",
+        "control": "Current ranking",
+        "unit": "Users (randomized at viewer level — this measures exposure shares, not creator outcomes)",
+        "population": "20,000 viewers (default interactive size; seed 42)",
+        "baseline": "Pre-period small-creator share of creator sessions, same viewers",
+        "duration": "28 days",
+        "primary": "Small-creator share of creator sessions (%)",
+        "secondary": ["Top-creator share of creator sessions (%)", "Creator sessions per user", "Reports per user (guardrail)"],
+        "guardrails": "Reports per user must not rise significantly by more than 10%; SRM must pass.",
+        "method": "CUPED with pre-period small-creator share; Welch 95% CI; SRM chi-square check",
+        "followups": ["Why is this statistically significant?", "Which tier gained the most?",
+                      "Show results for new users", "Show results for established users", "Explain CUPED"],
+    },
     "meta_creator_recommendations": {
         "id": "meta_creator_recommendations", "industry": "social",
         "title": "Meta creator recommendations and retention",
@@ -253,7 +271,8 @@ FLAGSHIP_CONFIGS.update({
 # engine behind it.
 INDUSTRY_SCENARIOS = {
     "social": ["reddit_feed_ranking", "meta_creator_recommendations",
-               "tiktok_notifications", "linkedin_connections"],
+               "tiktok_notifications", "linkedin_connections",
+               "linkedin_creator_crowding_out"],
     "marketplace": ["doordash_zip_promotion", "marketplace_dma_ads",
                     "uber_driver_incentives", "delivery_fee_optimization"],
     "pharma": ["pharma_dma_publisher", "hcp_omnichannel",

@@ -124,7 +124,7 @@ class Orchestrator:
                 return [_text("I don't recognise that industry. Pick one of the three cards, or explore the example scenarios.")]
             session["industry"] = ind["id"]
             session["state"] = "scenario"
-            return [_text(f"Great! Let's explore {ind['title'].lower()} experimentation.\n\nHere are four realistic experiments you can run."),
+            return [_text(f"Great! Let's explore {ind['title'].lower()} experimentation.\n\nHere are the realistic experiments you can run."),
                     {"type": "scenario_cards", "cards": scenario_cards_blocks(ind)},
                     _text("Or describe a custom experiment in your own words — I'll map it to the closest runnable scenario, or tell you honestly if it isn't supported yet.")]
 
@@ -242,6 +242,13 @@ class Orchestrator:
     def _handle_custom(self, session, text, low):
         if not text:
             return [_text("Tell me what you'd like to test, in your own words, or pick a card above.")]
+        # One exception to platform-first: a named scenario topic beats
+        # the platform. "LinkedIn ... top creators crowd out small
+        # creators" is the crowding-out scenario, not the LinkedIn
+        # connections scenario — the topic is more specific than the
+        # platform here. Check it before the platform names.
+        if "crowd" in low or "follower" in low or "top creator" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "linkedin_creator_crowding_out"})
         # Platform names win over topic words. The old order checked
         # "creator" before "linkedin", so "In LinkedIn, do top creators
         # crowd out small creators?" routed to Meta — the topic word
@@ -320,6 +327,9 @@ class Orchestrator:
                 n = {"five": 5, "ten": 10}.get(word, int(word) if word.isdigit() else 5)
             out = followups.exclude_top(df, result, sid, n=n)
             return [_text(out["text"]), _chips(cfg["followups"])]
+        if "tier" in low or "gained" in low or "crowd" in low:
+            out = followups.tier_shares(df, result, sid)
+            return [_text(out["text"]), _chips(cfg["followups"])]
         if "driver" in low or "delivery" in low and "hurt" in low:
             out = followups.driver_availability(df, result, sid)
             return [_text(out["text"]), _chips(cfg["followups"])]
@@ -330,7 +340,13 @@ class Orchestrator:
             out = followups.segment(df, result, sid, "new")
             return [_text(out["text"]), _chips(cfg["followups"])]
         if "established" in low or "returning" in low:
-            seg = "established" if sid == "reddit_feed_ranking" else "returning"
+            # Latent Phase 2 bug, fixed here: the old code returned
+            # "returning" for every non-Reddit scenario, so "Show results
+            # for established users" on Meta/TikTok/LinkedIn/crowding-out
+            # (whose segment value IS "established") fell through to an
+            # unsupported answer. Only the two marketplace scenarios
+            # with new/returning customers use "returning".
+            seg = "returning" if sid in ("doordash_zip_promotion", "delivery_fee_optimization") else "established"
             out = followups.segment(df, result, sid, seg)
             return [_text(out["text"]), _chips(cfg["followups"])]
         if "payer" in low:

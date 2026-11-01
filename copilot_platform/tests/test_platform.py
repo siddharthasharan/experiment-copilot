@@ -70,7 +70,7 @@ def main():
     _new = ["meta_creator_recommendations", "tiktok_notifications", "linkedin_connections",
             "marketplace_dma_ads", "uber_driver_incentives", "delivery_fee_optimization",
             "hcp_omnichannel", "field_visits_sampling", "cross_publisher_budget"]
-    check("all 12 industry scenarios registered", len(_CFG) == 12 and
+    check("all 13 industry scenarios registered", len(_CFG) == 13 and
           all(s in _CFG for ind in _IND.values() for s in ind))
     for _sid in _new:
         _a, _ra = run_flagship(_sid, seed=42)
@@ -104,15 +104,47 @@ def main():
     check("hcp low segment recomputes", _seg["supported"] and abs(_seg["lift_pct"] - next(x for x in _r_h["segments"] if x["segment"] == "low")["lift_pct"]) < 1e-9)
     # Routing regression (2026-10-31): a message naming a platform AND a
     # topic word must route to the platform, not the topic — "LinkedIn
-    # ... top creators ..." used to route to Meta via "creator".
+    # ... creators ..." used to route to Meta via "creator". (The full
+    # crowding-out message now routes to the crowding-out scenario by
+    # the more-specific-topic rule below; this case has no crowding-out
+    # keywords, so platform-first applies.)
     _s3 = new_session()
     orch.handle(_s3, action="industry", payload={"industry_id": "social"})
-    orch.handle(_s3, message="In linkedin i want to see if top creators with 100,000+ followers crowd out the lower follower count 1000-10000 followers creators")
+    orch.handle(_s3, message="In linkedin i want to see connection recommendations for new members")
     check("platform name beats topic word in routing", _s3.get("scenario_id") == "linkedin_connections")
+    # Crowding-out scenario (13th runnable): viewer-randomized tier shares.
+    _df_co, _r_co = run_flagship("linkedin_creator_crowding_out", seed=42)
+    check("crowding-out seed42 dont launch on falling small share",
+          _r_co["verdict"] == "DONT_LAUNCH" and _r_co["primary"]["lift_pct"] < 0)
+    check("crowding-out small share falls, top share rises",
+          _r_co["primary"]["treatment_mean"] < _r_co["primary"]["control_mean"] and
+          _r_co["top_share"]["treatment_mean"] > _r_co["top_share"]["control_mean"])
+    _tiers = followups.tier_shares(_df_co, _r_co, "linkedin_creator_crowding_out")
+    check("crowding-out tier shares sum to 100 per arm",
+          _tiers["supported"] and abs(sum(_df_co[_df_co.group == "control"][["post_small_share_pct", "post_mid_share_pct", "post_top_share_pct"]].mean()) - 100) < 0.5)
+    check("crowding-out tier verdict present", "crowding-out" in _tiers["text"])
+    _seg_co = followups.segment(_df_co, _r_co, "linkedin_creator_crowding_out", "established")
+    check("crowding-out established segment recomputes",
+          _seg_co["supported"] and abs(_seg_co["lift_pct"] - next(x for x in _r_co["segments"] if x["segment"] == "established")["lift_pct"]) < 1e-9)
+    _s4 = new_session()
+    orch.handle(_s4, action="industry", payload={"industry_id": "social"})
+    orch.handle(_s4, message="In linkedin i want to see if top creators crowd out small creators")
+    check("crowding-out topic beats platform in routing", _s4.get("scenario_id") == "linkedin_creator_crowding_out")
+    # Chat established-segment regression: the old handler returned
+    # "returning" for non-Reddit scenarios, breaking Meta established.
+    _s5 = new_session()
+    orch.handle(_s5, action="industry", payload={"industry_id": "social"})
+    orch.handle(_s5, action="scenario", payload={"scenario_id": "meta_creator_recommendations"})
+    _df_m, _r_m = run_flagship("meta_creator_recommendations", seed=42)
+    _trend_m = _r_m.pop("trend")
+    _s5.update({"state": "done", "df": _df_m, "result": _r_m,
+                "config": dict(_CFG["meta_creator_recommendations"])})
+    _fb = orch.handle(_s5, message="Show results for established users")
+    check("chat established segment works for Meta", "established users" in _fb[0]["text"])
     _s2 = new_session()
     _blocks = orch.handle(_s2, action="industry", payload={"industry_id": "social"})
     _cards = [b for b in _blocks if b["type"] == "scenario_cards"][0]["cards"]
-    check("social cards all runnable", len(_cards) == 4 and all(c["runnable"] for c in _cards))
+    check("social cards all runnable", len(_cards) == 5 and all(c["runnable"] for c in _cards))
     _blocks = orch.handle(_s2, action="scenario", payload={"scenario_id": "tiktok_notifications"})
     check("chat new scenario -> config card", any(b["type"] == "config" for b in _blocks) and _s2["state"] == "config")
     print("All platform tests passed.")

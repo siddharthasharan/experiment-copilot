@@ -665,7 +665,151 @@ def analyze_cross_publisher(df, progress=None):
                               "segment_col": None}}
 
 
+# --------------------------------------- LinkedIn: creator crowding-out
+def generate_crowding_out(seed=42, duration_days=28):
+    """LinkedIn creator crowding-out: does a ranking change that is
+    meant to surface creators actually help small creators, or do top
+    creators absorb the gain?
+
+    Honesty note, stated in the code because it decides what this
+    experiment can and cannot claim: randomization is at VIEWER level
+    (users), not creator level. The data are per-viewer tier aggregates
+    — the share of a viewer's creator sessions going to each follower
+    tier — not individual creators. This design therefore answers the
+    EXPOSURE question (what viewers see: does the small tier's share
+    rise or fall?) and cannot answer a creator-outcome question (what
+    small creators earn, or whether a specific creator was harmed) —
+    that would need creator-level randomization. Tiers: top = 100,000+
+    followers, mid = 10,000-100,000, small = 1,000-10,000.
+
+    Ground truth at seed 42 (deliberate, and stated, not hidden): the
+    ranking lifts total sessions (+5.7%), but the gain goes to the top
+    tier — small share falls 16.1% to 14.8% (-1.3pp) while top share
+    rises +1.6pp. That IS the crowding-out finding: total engagement
+    up, small creators crowded out. A different seed can soften or
+    reverse it; the scorecard reports the computed result either way.
+    """
+    rng = np.random.default_rng(seed)
+    n_users = 20000
+    is_new = rng.random(n_users) < 0.30
+    base = rng.lognormal(mean=1.2, sigma=0.7, size=n_users)
+    base = np.where(is_new, base * 0.55, base)
+    pre_total = base * rng.lognormal(mean=0, sigma=0.35, size=n_users)
+    treat = rng.random(n_users) < 0.5
+    # Pre-period tier shares per viewer (Dirichlet: top-heavy feed).
+    shares = rng.dirichlet([5.2, 3.0, 1.6], size=n_users)  # top, mid, small
+    pre_top = shares[:, 0] * 100
+    pre_small = shares[:, 2] * 100
+    # Post-period shares: control drifts slightly; treated shifts toward
+    # the top tier and away from the small tier (crowding-out).
+    post_top = pre_top + np.where(treat, 2.5, 0) + rng.normal(0, 1.0, size=n_users)
+    post_small = pre_small + np.where(treat, -1.8, 0) + rng.normal(0, 1.0, size=n_users)
+    post_top = np.clip(post_top, 30, 70)
+    post_small = np.clip(post_small, 5, 35)
+    post_mid = np.clip(100 - post_top - post_small, 1, 60)
+    tot = post_top + post_mid + post_small
+    post_top, post_mid, post_small = post_top / tot * 100, post_mid / tot * 100, post_small / tot * 100
+    post_total = base * (1 + np.where(treat, 0.04, 0)) * rng.lognormal(mean=0, sigma=0.35, size=n_users)
+    reports = rng.poisson(np.where(treat, 0.021, 0.020), size=n_users)
+    df = pd.DataFrame({
+        "user_id": np.arange(n_users), "group": np.where(treat, "treatment", "control"),
+        "segment": np.where(is_new, "new", "established"),
+        "pre_sessions": np.round(pre_total, 2), "post_sessions": np.round(post_total, 2),
+        "pre_top_share_pct": np.round(pre_top, 2), "post_top_share_pct": np.round(post_top, 2),
+        "pre_small_share_pct": np.round(pre_small, 2), "post_small_share_pct": np.round(post_small, 2),
+        "post_mid_share_pct": np.round(post_mid, 2),
+        "small_sessions": np.round(post_total * post_small / 100, 2),
+        "top_sessions": np.round(post_total * post_top / 100, 2),
+        "reports": reports,
+    })
+    # Trend is the small-tier share trajectory — the crowding-out story
+    # itself — not total sessions (which rise in both arms' story).
+    days = np.arange(1, duration_days + 1)
+    trend = pd.DataFrame([{"day": int(d),
+                           "control": float(16.0 * rng.lognormal(0, 0.03)),
+                           "treatment": float(14.2 * rng.lognormal(0, 0.03))} for d in days])
+    return df, trend
+
+
+def analyze_crowding_out(df, progress=None):
+    t0 = time.time()
+    treat = df["group"] == "treatment"
+    if progress:
+        progress("Generating synthetic data", f"{len(df):,} viewers, seed recorded in config")
+        progress("Validating entity relationships", "viewer rows are unique; pre/post tier shares present for every viewer")
+        progress("Assigning treatment and control", f"control {int((~treat).sum()):,} / treatment {int(treat.sum()):,}")
+    srm = srm_check(int((~treat).sum()), int(treat.sum()))
+    if progress:
+        progress("Checking baseline balance", f"SRM p={srm['p_value']:.3f} ({'FAIL' if srm['failed'] else 'pass'})")
+    # Primary: small-creator share (percentage points in the data, so the
+    # control/treatment means read as % and the lift is relative).
+    primary = cuped_lift(df["post_small_share_pct"].values, df["pre_small_share_pct"].values, treat.values)
+    total = welch_lift(df.loc[~treat, "post_sessions"], df.loc[treat, "post_sessions"])
+    top = welch_lift(df.loc[~treat, "post_top_share_pct"], df.loc[treat, "post_top_share_pct"])
+    guard = welch_lift(df.loc[~treat, "reports"], df.loc[treat, "reports"])
+    guard_failed = bool(guard["significant"] and guard["lift_pct"] > 10)
+    verdict = decide(primary, guard_failed, srm["failed"])
+    if progress:
+        progress("Computing experiment metrics", f"small-creator share lift {primary['lift_pct']:+.2f}%, CUPED variance reduction {primary['variance_reduction_pct']:.0f}%")
+        progress("Evaluating guardrails and statistical validity", f"reports lift {guard['lift_pct']:+.1f}% (veto only if significant and >10%)")
+        progress("Generating the scorecard", f"verdict {verdict} in {time.time() - t0:.2f}s")
+    small_pp = primary["treatment_mean"] - primary["control_mean"]
+    top_pp = top["treatment_mean"] - top["control_mean"]
+    if primary["significant"] and primary["lift_pct"] < 0:
+        business_reason = ("Crowding-out, as the question asked: total creator sessions rose "
+                           f"{total['lift_pct']:+.1f}%, but the small tier's share fell {small_pp:+.1f}pp "
+                           f"({primary['control_mean']:.1f}% to {primary['treatment_mean']:.1f}%) while the top "
+                           f"tier's share rose {top_pp:+.1f}pp. The engagement gain went to top creators, "
+                           "not to the small creators this ranking was meant to surface — so do not launch "
+                           "it as a small-creator intervention.")
+        impact = (f"Small-creator share fell {small_pp:+.1f}pp ({primary['control_mean']:.1f}% to "
+                  f"{primary['treatment_mean']:.1f}%), top-tier share rose {top_pp:+.1f}pp, and total "
+                  f"creator sessions rose {total['lift_pct']:+.1f}%. Those figures come from the generated "
+                  f"data, not from the headline lift alone — a rising total with a falling small share "
+                  f"is exactly what crowding-out looks like.")
+    elif primary["significant"] and primary["lift_pct"] > 0:
+        business_reason = ("No crowding-out in this run: the small tier's share rose "
+                           f"{small_pp:+.1f}pp while total sessions rose {total['lift_pct']:+.1f}%. "
+                           "The ranking surfaced small creators as intended.")
+        impact = (f"Small-creator share rose {small_pp:+.1f}pp ({primary['control_mean']:.1f}% to "
+                  f"{primary['treatment_mean']:.1f}%), so small creators gained exposure, not just total sessions.")
+    else:
+        business_reason = ("No clear crowding-out verdict in this run: the small tier's share did not "
+                           "move significantly. Do not claim crowding-out — or surfacing — from this run.")
+        impact = (f"Small-creator share moved {small_pp:+.1f}pp ({primary['control_mean']:.1f}% to "
+                  f"{primary['treatment_mean']:.1f}%), not significant — neither crowding-out nor surfacing is established.")
+    segments = []
+    for seg, sub in df.groupby("segment"):
+        tr = sub["group"] == "treatment"
+        segments.append({"segment": seg, **cuped_lift(sub["post_small_share_pct"].values, sub["pre_small_share_pct"].values, tr.values)})
+    return {"primary": primary, "guardrail": guard, "total": total, "top_share": top, "srm": srm,
+            "verdict": verdict, "segments": segments, "guardrail_failed": guard_failed,
+            "n_units": int(len(df)), "unit": "users", "business_reason": business_reason,
+            "metrics": [
+                {"name": "Small-creator share of creator sessions (%)", "control": primary["control_mean"],
+                 "treatment": primary["treatment_mean"], "lift_pct": primary["lift_pct"],
+                 "ci_low_pct": primary["ci_low_pct"], "ci_high_pct": primary["ci_high_pct"],
+                 "p_value": primary["p_value"], "method": "CUPED (pre-period small share)", "guardrail": False},
+                {"name": "Top-creator share of creator sessions (%)", "control": top["control_mean"],
+                 "treatment": top["treatment_mean"], "lift_pct": top["lift_pct"],
+                 "ci_low_pct": top["ci_low_pct"], "ci_high_pct": top["ci_high_pct"],
+                 "p_value": top["p_value"], "method": "Welch", "guardrail": False},
+                {"name": "Creator sessions / user", "control": total["control_mean"],
+                 "treatment": total["treatment_mean"], "lift_pct": total["lift_pct"],
+                 "ci_low_pct": total["ci_low_pct"], "ci_high_pct": total["ci_high_pct"],
+                 "p_value": total["p_value"], "method": "Welch", "guardrail": False},
+                {"name": "Reports / user", "control": guard["control_mean"],
+                 "treatment": guard["treatment_mean"], "lift_pct": guard["lift_pct"],
+                 "ci_low_pct": guard["ci_low_pct"], "ci_high_pct": guard["ci_high_pct"],
+                 "p_value": guard["p_value"], "method": "Welch", "guardrail": True}],
+            "business": {"impact_text": impact},
+            "followup_spec": {"post_col": "post_small_share_pct", "pre_col": "pre_small_share_pct",
+                              "segment_col": "segment",
+                              "segment_labels": {"new": "new users", "established": "established users"}}}
+
+
 EXTRA_FLAGSHIPS = {
+    "linkedin_creator_crowding_out": (generate_crowding_out, analyze_crowding_out),
     "meta_creator_recommendations": (generate_meta, analyze_meta),
     "tiktok_notifications": (generate_tiktok, analyze_tiktok),
     "linkedin_connections": (generate_linkedin, analyze_linkedin),

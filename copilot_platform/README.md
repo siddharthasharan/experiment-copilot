@@ -11,7 +11,7 @@ remains the "Example Scenarios" destination.
 pip install -r requirements.txt
 python -m copilot_platform.server --port 8000
 # open http://localhost:8000
-python copilot_platform/tests/test_platform.py   # 84 checks, no pytest needed
+python copilot_platform/tests/test_platform.py   # 92 checks, no pytest needed
 ```
 
 ## Layout (from the spec, no mockup file was available in the workspace)
@@ -96,6 +96,19 @@ says so when asked. All 12 industry scenarios are generated and
 analysed live on every run, with real stage-by-stage progress (each
 stage is reported only when its function returns — no timers, no fake
 percentages).
+
+## 13th scenario: LinkedIn creator crowding-out (seed 42)
+
+Viewer-randomized, not creator-randomized — that distinction is the
+point. Primary: small-creator (1,000–10,000 followers) share of creator
+sessions, CUPED on its pre-period value. Top tier is 100,000+ followers,
+mid tier 10,000–100,000. At seed 42: small share 16.1% → 14.8% (−1.3pp),
+top share +1.6pp, total sessions +5.7% → **Do Not Launch** as a
+small-creator intervention: the gain went to top creators. The trend
+chart plots the small-tier share itself. Follow-up "Which tier gained
+the most?" recomputes all three tier shares by arm. Watch-out states
+the limit plainly: this measures viewer exposure, not creator earnings
+— a creator-level claim would need creator randomization.
 
 ## Known limits
 
