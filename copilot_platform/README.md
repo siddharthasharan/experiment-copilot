@@ -11,7 +11,7 @@ remains the "Example Scenarios" destination.
 pip install -r requirements.txt
 python -m copilot_platform.server --port 8000
 # open http://localhost:8000
-python copilot_platform/tests/test_platform.py   # 92 checks, no pytest needed
+python copilot_platform/tests/test_platform.py   # 99 checks, no pytest needed
 ```
 
 ## Layout (from the spec, no mockup file was available in the workspace)

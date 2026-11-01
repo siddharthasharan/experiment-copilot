@@ -66,6 +66,57 @@ def exclude_top(df, result, scenario_id, n=5):
                     f"if it collapses, the headline result was concentrated in a few large units."}
 
 
+def _geo_cols(df, result, scenario_id):
+    """(base_col, unit_col) for a geo scenario, or (None, None).
+
+    Flagships keep their explicit mapping; Phase 2 geo scenarios carry
+    the same information in the result's followup_spec. User-level
+    scenarios have neither — they have no markets to rank.
+    """
+    if scenario_id == "doordash_zip_promotion":
+        return "baseline_orders", "zip"
+    if scenario_id == "pharma_dma_publisher":
+        return "pre_starts", "dma"
+    spec = (result or {}).get("followup_spec") or {}
+    if spec.get("base_col") and spec.get("unit_col"):
+        return spec["base_col"], spec["unit_col"]
+    return None, None
+
+
+def largest_units(df, result, scenario_id, n=5, smallest=False):
+    """Descriptive, not analytical: list the n largest (or smallest)
+    units by baseline volume, with their baseline values and their
+    combined share of baseline volume.
+
+    This is the follow-up the chat was missing (2026-10-31): "what are
+    the five largest DMAs?" is a question about the data, not a request
+    to exclude them, and the old handler only recognised "largest"
+    inside "exclude the ... largest". Answering it needs no new
+    estimation — just a sorted read of the stored frame — and it pairs
+    naturally with the exclude-top check ("these are the units that
+    check would drop").
+    """
+    base_col, unit_col = _geo_cols(df, result, scenario_id)
+    if base_col is None or unit_col not in df.columns or base_col not in df.columns:
+        return {"supported": False,
+                "text": "Largest units only applies to geo experiments (ZIPs, DMAs, cities, territories). "
+                        "This experiment randomizes at user level, so there are no markets to rank. "
+                        "Try a segment instead — for example, 'Show results for new users'."}
+    n = max(1, int(n))
+    ordered = df.nsmallest(n, base_col) if smallest else df.nlargest(n, base_col)
+    total = float(df[base_col].sum())
+    share = float(ordered[base_col].sum() / total * 100) if total else 0.0
+    kind = "smallest" if smallest else "largest"
+    unit_name = {"zip": "ZIPs", "dma": "DMAs", "city": "cities", "territory": "territories"}.get(unit_col, unit_col)
+    items = "; ".join(f"{unit_col} {row[unit_col]} ({row[base_col]:,.1f})" for _, row in ordered.iterrows())
+    text = (f"The {n} {kind} {unit_name} by baseline volume are: {items}. "
+            f"Together they account for {share:.1f}% of baseline volume.")
+    if not smallest:
+        text += (f" To see whether the headline result survives without them, ask "
+                 f"'Exclude the {n} largest {unit_name}'.")
+    return {"supported": True, "units": ordered[unit_col].tolist(), "text": text}
+
+
 def segment(df, result, scenario_id, segment_name):
     """Recompute the primary metric for one segment of the stored frame."""
     seg = segment_name.lower()

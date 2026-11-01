@@ -59,7 +59,7 @@ FLAGSHIP_CONFIGS = {
         "guardrails": "Delivery time must not rise significantly by more than 10%; cancellations must not rise significantly by more than 20%; SRM must pass.",
         "method": "Pre-period adjusted ZIP-level analysis; Welch 95% CI across ZIPs; SRM chi-square check",
         "followups": ["Why is this statistically significant?", "Exclude the five largest markets",
-                      "Show results for new customers", "Did the promotion hurt driver availability?"],
+                      "What are the five largest ZIPs?", "Show results for new customers", "Did the promotion hurt driver availability?"],
     },
     "pharma_dma_publisher": {
         "id": "pharma_dma_publisher", "industry": "pharma",
@@ -77,7 +77,7 @@ FLAGSHIP_CONFIGS = {
         "guardrails": "Claims completeness must not differ significantly by arm by more than 3%; SRM must pass.",
         "method": "Pre-period adjusted DMA-level analysis; claims-completeness adjustment; Welch 95% CI across DMAs",
         "followups": ["Why is this statistically significant?", "Exclude the five largest markets",
-                      "Which publisher performed best?", "Show results for high payer access DMAs"],
+                      "What are the five largest DMAs?", "Which publisher performed best?", "Show results for high payer access DMAs"],
     },
 }
 
@@ -170,7 +170,7 @@ FLAGSHIP_CONFIGS.update({
         "guardrails": "Refund rate must not rise significantly by more than 10%; SRM must pass.",
         "method": "Pre-period adjusted DMA-level analysis; Welch 95% CI across DMAs; SRM chi-square check",
         "followups": ["Why is this statistically significant?", "Exclude the five largest DMAs",
-                      "Show results for large DMAs", "Show results for small DMAs"],
+                      "What are the five largest DMAs?", "Show results for large DMAs", "Show results for small DMAs"],
     },
     "uber_driver_incentives": {
         "id": "uber_driver_incentives", "industry": "marketplace",
@@ -188,7 +188,7 @@ FLAGSHIP_CONFIGS.update({
         "guardrails": "Cancellation rate must not rise significantly by more than 20%; SRM must pass.",
         "method": "Pre-period adjusted city-level analysis; Welch 95% CI across cities; SRM chi-square check",
         "followups": ["Why is this statistically significant?", "Exclude the five largest cities",
-                      "Show results for large cities", "Show results for small cities",
+                      "What are the five largest cities?", "Show results for large cities", "Show results for small cities",
                       "Did incentives change driver utilization?"],
     },
     "delivery_fee_optimization": {
@@ -207,7 +207,7 @@ FLAGSHIP_CONFIGS.update({
         "guardrails": "Delivery time must not rise significantly by more than 10%; cancellations must not rise significantly by more than 20%; SRM must pass.",
         "method": "Pre-period adjusted ZIP-level analysis; Welch 95% CI across ZIPs; SRM chi-square check",
         "followups": ["Why is this statistically significant?", "Exclude the five largest ZIPs",
-                      "Show results for new customers", "Show results for returning customers"],
+                      "What are the five largest ZIPs?", "Show results for new customers", "Show results for returning customers"],
     },
     "hcp_omnichannel": {
         "id": "hcp_omnichannel", "industry": "pharma",
@@ -243,7 +243,7 @@ FLAGSHIP_CONFIGS.update({
         "guardrails": "HCP opt-out rate must not rise significantly by more than 10%; SRM must pass.",
         "method": "Pre-period adjusted territory-level analysis; Welch 95% CI across territories; SRM chi-square check",
         "followups": ["Why is this statistically significant?", "Exclude the five largest territories",
-                      "Show results for large territories", "Show results for small territories"],
+                      "What are the five largest territories?", "Show results for large territories", "Show results for small territories"],
     },
     "cross_publisher_budget": {
         "id": "cross_publisher_budget", "industry": "pharma",
@@ -261,7 +261,7 @@ FLAGSHIP_CONFIGS.update({
         "guardrails": "Claims completeness must not differ significantly by arm by more than 3%; SRM must pass.",
         "method": "Pre-period adjusted DMA-level analysis; claims-completeness adjustment; Welch 95% CI across DMAs",
         "followups": ["Why is this statistically significant?", "Exclude the five largest DMAs",
-                      "Which publisher performed best?", "Show results for high payer access DMAs"],
+                      "What are the five largest DMAs?", "Which publisher performed best?", "Show results for high payer access DMAs"],
     },
 })
 

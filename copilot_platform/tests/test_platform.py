@@ -141,6 +141,31 @@ def main():
                 "config": dict(_CFG["meta_creator_recommendations"])})
     _fb = orch.handle(_s5, message="Show results for established users")
     check("chat established segment works for Meta", "established users" in _fb[0]["text"])
+    # Largest-units follow-up (2026-10-31): "what are the five largest
+    # DMAs?" must be answered from the stored frame, not fall through.
+    _df_x2, _r_x2 = run_flagship("cross_publisher_budget", seed=42)
+    _lg = followups.largest_units(_df_x2, _r_x2, "cross_publisher_budget", 5)
+    check("largest units lists 5 sorted by baseline",
+          _lg["supported"] and len(_lg["units"]) == 5 and
+          _lg["units"] == _df_x2.nlargest(5, "pre_starts")["dma"].tolist())
+    check("largest units text names a DMA and a share", "dma" in _lg["text"] and "% of baseline" in _lg["text"])
+    _sm = followups.largest_units(_df_x2, _r_x2, "cross_publisher_budget", 3, smallest=True)
+    check("smallest units lists 3", _sm["supported"] and len(_sm["units"]) == 3)
+    _df_dd2, _r_dd2 = run_flagship("doordash_zip_promotion", seed=42)
+    _lg_dd = followups.largest_units(_df_dd2, _r_dd2, "doordash_zip_promotion", 5)
+    check("largest ZIPs work for flagship geo", _lg_dd["supported"] and len(_lg_dd["units"]) == 5)
+    _df_r2, _r_r2 = run_flagship("reddit_feed_ranking", seed=42)
+    check("largest units honestly unsupported for user-level",
+          followups.largest_units(_df_r2, _r_r2, "reddit_feed_ranking", 5)["supported"] is False)
+    _s6 = new_session()
+    orch.handle(_s6, action="industry", payload={"industry_id": "pharma"})
+    orch.handle(_s6, action="scenario", payload={"scenario_id": "cross_publisher_budget"})
+    _s6.update({"state": "done", "df": _df_x2, "result": _r_x2,
+                "config": dict(_CFG["cross_publisher_budget"])})
+    _fb2 = orch.handle(_s6, message="what are the five largest dmas")
+    check("chat largest question answered", "largest DMAs" in _fb2[0]["text"] and "I can't answer" not in _fb2[0]["text"])
+    _fb3 = orch.handle(_s6, message="Exclude the five largest DMAs")
+    check("chat exclude-largest still works after largest branch", "Excluding the 5 largest units" in _fb3[0]["text"])
     _s2 = new_session()
     _blocks = orch.handle(_s2, action="industry", payload={"industry_id": "social"})
     _cards = [b for b in _blocks if b["type"] == "scenario_cards"][0]["cards"]

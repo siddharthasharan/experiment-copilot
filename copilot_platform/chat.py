@@ -327,6 +327,18 @@ class Orchestrator:
                 n = {"five": 5, "ten": 10}.get(word, int(word) if word.isdigit() else 5)
             out = followups.exclude_top(df, result, sid, n=n)
             return [_text(out["text"]), _chips(cfg["followups"])]
+        # Descriptive largest/smallest question ("what are the five
+        # largest DMAs?") — not an exclusion request, so it must not
+        # fall through to the generic fallback. "Biggest" is a synonym
+        # for "largest" here.
+        if "largest" in low or "smallest" in low or "biggest" in low:
+            n = 5
+            _m = re.search(r"(\d+|five|ten)", low)
+            if _m:
+                _w = _m.group(1)
+                n = {"five": 5, "ten": 10}.get(_w, int(_w) if _w.isdigit() else 5)
+            out = followups.largest_units(df, result, sid, n=n, smallest=("smallest" in low))
+            return [_text(out["text"]), _chips(cfg["followups"])]
         if "tier" in low or "gained" in low or "crowd" in low:
             out = followups.tier_shares(df, result, sid)
             return [_text(out["text"]), _chips(cfg["followups"])]
