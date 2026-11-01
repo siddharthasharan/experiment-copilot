@@ -139,10 +139,10 @@ class Orchestrator:
                 return [_text(f"Let's test whether {cfg['hypothesis'][0].lower() + cfg['hypothesis'][1:]}"
                               f"\n\nHere's the experimental design I recommend."),
                         self._config_block(session["config"])]
-            # Non-runnable scenario card clicked.
-            return [_text("That scenario isn't runnable yet in Phase 1 — I won't fake a run for it. "
-                          "The runnable flagships are Reddit feed-ranking, DoorDash ZIP promotion, and "
-                          "Pharma DMA publisher incrementality, plus the 14 example scenarios. "
+            # Non-runnable scenario card clicked (no longer reachable from
+            # the industry cards in Phase 2, kept as a guard).
+            return [_text("That scenario isn't runnable — I won't fake a run for it. "
+                          "The runnable options are the 12 industry scenarios, plus the 14 example scenarios. "
                           "Pick one of those, or tell me what you wanted to test and I'll point you to the closest match.")]
 
         if action == "example":
@@ -209,7 +209,7 @@ class Orchestrator:
         elif "seed" in low:
             session["modify_target"] = "seed"
         elif "primary" in low or "metric" in low:
-            return [_text("The primary metric is fixed by the flagship design in Phase 1 — changing it would mean a different analysis, not just a relabel. The secondary and guardrail metrics are already in the scorecard's metrics table after a run, and you can ask segment and exclusion follow-ups about them. Pick duration or seed to change, or run this design."),
+            return [_text("The primary metric is fixed by the scenario design — changing it would mean a different analysis, not just a relabel. The secondary and guardrail metrics are already in the scorecard's metrics table after a run, and you can ask segment and exclusion follow-ups about them. Pick duration or seed to change, or run this design."),
                     _chips(["Duration", "Seed"])]
         else:
             return [_text("Pick one to change:"), _chips(["Duration", "Seed"])]
@@ -244,17 +244,36 @@ class Orchestrator:
             return [_text("Tell me what you'd like to test, in your own words, or pick a card above.")]
         if "reddit" in low or "feed" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "reddit_feed_ranking"})
+        if "meta" in low or "creator" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "meta_creator_recommendations"})
+        if "tiktok" in low or "notification" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "tiktok_notifications"})
+        if "linkedin" in low or "connection" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "linkedin_connections"})
         if "doordash" in low or "promotion" in low or "zip" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "doordash_zip_promotion"})
-        if "pharma" in low or "publisher" in low or "dma" in low or "hcp" in low:
+        if "uber" in low or "driver incentive" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "uber_driver_incentives"})
+        if "fee" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "delivery_fee_optimization"})
+        if "hcp" in low or "omnichannel" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "hcp_omnichannel"})
+        if "field" in low or "sampling" in low or "visit" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "field_visits_sampling"})
+        if "cross-publisher" in low or "cross publisher" in low or "budget allocation" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "cross_publisher_budget"})
+        if "dma" in low and ("advertis" in low or "marketplace" in low):
+            return self.handle(session, action="scenario", payload={"scenario_id": "marketplace_dma_ads"})
+        if "pharma" in low or "publisher" in low or "dma" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "pharma_dma_publisher"})
         # Existing scenario by name (old chat behaviour, preserved).
         for e in self.examples:
             if e["title"].lower() in low or e["id"].replace("_", " ") in low:
                 return self.handle(session, action="example", payload={"scenario_id": e["id"]})
         return [_text("I can't map that to a runnable experiment yet, and I won't guess a design for it. "
-                      "The runnable options right now are the three flagships — Reddit feed-ranking, "
-                      "DoorDash ZIP promotion, Pharma DMA publisher incrementality — plus the 14 example "
+                      "The runnable options right now are the 12 industry scenarios — Reddit, Meta, TikTok, "
+                      "LinkedIn, DoorDash, DMA advertising, Uber, delivery-fee, Pharma DMA, HCP omnichannel, "
+                      "field visits, cross-publisher — plus the 14 example "
                       "scenarios. Which of those is closest to what you had in mind?")]
 
     # ------------------------------------------------------------ follow-ups
@@ -296,6 +315,18 @@ class Orchestrator:
             return [_text(out["text"]), _chips(cfg["followups"])]
         if "payer" in low:
             seg = "high" if "high" in low else "low"
+            out = followups.segment(df, result, sid, seg)
+            return [_text(out["text"]), _chips(cfg["followups"])]
+        # Generic Phase 2 segment phrases (large/small cities, DMAs,
+        # territories; low/high prior-engagement HCPs). Existing branches
+        # above already handle new/established/returning/payer.
+        for _tok in ("large", "small"):
+            if _tok in low:
+                out = followups.segment(df, result, sid, _tok)
+                if out["supported"]:
+                    return [_text(out["text"]), _chips(cfg["followups"])]
+        if "prior engagement" in low:
+            seg = "low" if "low" in low else "high"
             out = followups.segment(df, result, sid, seg)
             return [_text(out["text"]), _chips(cfg["followups"])]
         if "why" in low and "significant" in low:

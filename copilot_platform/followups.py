@@ -34,10 +34,18 @@ def exclude_top(df, result, scenario_id, n=5):
     elif scenario_id == "pharma_dma_publisher":
         base_col, post_col, pre_col, unit_col = "pre_starts", "post_starts_adjusted", "pre_starts", "dma"
     else:
-        return {"supported": False,
-                "text": "Excluding the largest markets only applies to geo experiments (DoorDash ZIPs, Pharma DMAs). "
-                        "This experiment randomizes at user level, so there are no markets to exclude. "
-                        "Try a segment instead — for example, 'Show results for new customers'."}
+        # Phase 2 geo scenarios carry their own spec in the result, so
+        # exclude-top works for any geo unit (DMA, ZIP, city, territory)
+        # without a new hardcoded branch per scenario.
+        spec = (result or {}).get("followup_spec") or {}
+        if spec.get("base_col") and spec.get("unit_col"):
+            base_col, post_col, pre_col, unit_col = (spec["base_col"], spec["post_col"],
+                                                     spec["pre_col"], spec["unit_col"])
+        else:
+            return {"supported": False,
+                    "text": "Excluding the largest markets only applies to geo experiments (DoorDash ZIPs, Pharma DMAs). "
+                            "This experiment randomizes at user level, so there are no markets to exclude. "
+                            "Try a segment instead — for example, 'Show results for new customers'."}
     top = df.nlargest(n, base_col)[unit_col].tolist()
     sub = df[~df[unit_col].isin(top)]
     treat = sub["group"] == "treatment"
@@ -108,12 +116,73 @@ def segment(df, result, scenario_id, segment_name):
                 "text": f"For {label} (n={len(sub)} DMAs), treatment starts per DMA moved {r['lift_pct']:+.2f}% "
                         f"(95% CI [{r['ci_low_pct']:+.2f}%, {r['ci_high_pct']:+.2f}%], p={r['p_value']:.3g}, "
                         f"{'significant' if r['significant'] else 'not significant'})."}
+    if scenario_id == "cross_publisher_budget":
+        if "high" in seg:
+            sub = df[df["payer_access"] >= 0.5]; label = "high payer access DMAs"
+        elif "low" in seg:
+            sub = df[df["payer_access"] < 0.5]; label = "low payer access DMAs"
+        else:
+            return {"supported": False, "text": "For cross-publisher, segments are 'high payer access DMAs' and 'low payer access DMAs'."}
+        tr = sub["group"] == "treatment"
+        r = cuped_lift(sub["post_starts_adjusted"].values, sub["pre_starts"].values, tr.values)
+        return {"supported": True, "segment": label, **r,
+                "text": f"For {label} (n={len(sub)} DMAs), treatment starts per DMA moved {r['lift_pct']:+.2f}% "
+                        f"(95% CI [{r['ci_low_pct']:+.2f}%, {r['ci_high_pct']:+.2f}%], p={r['p_value']:.3g}, "
+                        f"{'significant' if r['significant'] else 'not significant'})."}
+    if scenario_id == "delivery_fee_optimization":
+        if "new" in seg:
+            col, label = "orders_new", "new customers"
+        elif "return" in seg:
+            col, label = "orders_returning", "returning customers"
+        else:
+            return {"supported": False, "text": "For the fee experiment, segments are 'new customers' and 'returning customers'."}
+        tr = df["group"] == "treatment"
+        share = (df[col] / df["post_orders"]).fillna(0)
+        pre_seg = df["pre_orders"] * share
+        r = cuped_lift(df[col].values, pre_seg.values, tr.values)
+        return {"supported": True, "segment": label, **r,
+                "text": f"For {label}, orders per ZIP moved {r['lift_pct']:+.2f}% "
+                        f"(95% CI [{r['ci_low_pct']:+.2f}%, {r['ci_high_pct']:+.2f}%], p={r['p_value']:.3g}, "
+                        f"{'significant' if r['significant'] else 'not significant'})."}
+    # Generic Phase 2 branch: any scenario whose result carries a
+    # followup_spec with a segment column uses the same CUPED estimator
+    # as its scorecard segment table, so the two answers agree.
+    spec = (result or {}).get("followup_spec") or {}
+    seg_col = spec.get("segment_col")
+    if seg_col and seg_col in df.columns:
+        labels = spec.get("segment_labels") or {}
+        match = None
+        for v in df[seg_col].unique():
+            if str(v).lower() == seg.strip() or str(v).lower() in seg:
+                match = v
+                break
+        if match is None:
+            return {"supported": False,
+                    "text": "Segments for this experiment are: " + ", ".join(labels.values()) + "."}
+        label = labels.get(str(match), str(match))
+        sub = df[df[seg_col] == match]
+        tr = sub["group"] == "treatment"
+        r = cuped_lift(sub[spec["post_col"]].values, sub[spec["pre_col"]].values, tr.values)
+        return {"supported": True, "segment": label, **r,
+                "text": f"For {label} (n={len(sub):,} {result.get('unit', 'units')}), the primary metric moved "
+                        f"{r['lift_pct']:+.2f}% (95% CI [{r['ci_low_pct']:+.2f}%, {r['ci_high_pct']:+.2f}%], "
+                        f"p={r['p_value']:.3g}, {'significant' if r['significant'] else 'not significant'})."}
     return {"supported": False, "text": "No segment breakdown is defined for this experiment."}
 
 
 def driver_availability(df, result, scenario_id):
+    if scenario_id == "uber_driver_incentives":
+        tr = df["group"] == "treatment"
+        util = welch_lift(df.loc[~tr, "utilization"], df.loc[tr, "utilization"])
+        canc = welch_lift(df.loc[~tr, "cancel_rate"], df.loc[tr, "cancel_rate"])
+        return {"supported": True, "utilization": util, "cancellation": canc,
+                "text": f"Driver utilization moved {util['lift_pct']:+.1f}% in treated cities "
+                        f"(control {util['control_mean']:.2f} vs treatment {util['treatment_mean']:.2f} trips per driver-hour, "
+                        f"p={util['p_value']:.3g}) and cancellations moved {canc['lift_pct']:+.1f}% "
+                        f"(p={canc['p_value']:.3g}). If utilization rose without cancellations rising, "
+                        f"the bonus bought real supply; if cancellations rose too, the extra trips came with service cost."}
     if scenario_id != "doordash_zip_promotion":
-        return {"supported": False, "text": "Driver availability is a DoorDash marketplace metric; this experiment has no driver data."}
+        return {"supported": False, "text": "Driver availability is a marketplace metric; this experiment has no driver data."}
     tr = df["group"] == "treatment"
     deliv = welch_lift(df.loc[~tr, "delivery_min"], df.loc[tr, "delivery_min"])
     canc = welch_lift(df.loc[~tr, "cancel_rate"], df.loc[tr, "cancel_rate"])
@@ -126,9 +195,12 @@ def driver_availability(df, result, scenario_id):
 
 
 def publisher_best(df, result, scenario_id):
-    if scenario_id != "pharma_dma_publisher":
-        return {"supported": False, "text": "Publisher breakdowns are a Pharma experiment feature; this experiment has no publisher data."}
+    # Any scenario whose result carries publisher shares (Pharma flagship
+    # and cross-publisher) gets the descriptive answer with the caveat;
+    # scenarios without publisher data get an honest refusal.
     pubs = result.get("publishers", [])
+    if not pubs:
+        return {"supported": False, "text": "Publisher breakdowns are a Pharma experiment feature; this experiment has no publisher data."}
     best = max(pubs, key=lambda p: p["impressions"]) if pubs else None
     lines = "; ".join(f"{p['publisher']}: {p['impressions']:,.0f} impressions ({p['share_pct']:.1f}%)" for p in pubs)
     return {"supported": True, "publishers": pubs,

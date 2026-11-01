@@ -442,8 +442,19 @@ FLAGSHIPS = {
     "pharma_dma_publisher": (generate_pharma, analyze_pharma),
 }
 
+# Phase 2: the 9 remaining industry scenarios live in engine_extra.py
+# (same primitives, same result shape). They are merged lazily in
+# run_flagship below, and eagerly in server.py, because engine_extra
+# imports the stats helpers from this module — a top-level import here
+# would be a circular import if engine_extra is imported first.
+EXTRA_FLAGSHIPS = None
+
 
 def run_flagship(scenario_id, seed=42, progress=None, duration_days=None):
+    if scenario_id not in FLAGSHIPS:
+        from .engine_extra import EXTRA_FLAGSHIPS as _EXTRA
+
+        FLAGSHIPS.update(_EXTRA)
     gen, ana = FLAGSHIPS[scenario_id]
     df, trend = gen(seed=seed, duration_days=duration_days) if duration_days else gen(seed=seed)
     result = ana(df, progress=progress)

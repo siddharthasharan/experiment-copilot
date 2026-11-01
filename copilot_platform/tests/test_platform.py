@@ -65,6 +65,49 @@ def main():
     sc = build_scorecard(cfg, res_dd, trend, 42)
     check("scorecard lift matches engine", abs(sc["primary_lift_pct"] - res_dd["primary"]["lift_pct"]) < 1e-9)
     check("scorecard verdict matches engine", sc["verdict"] == res_dd["verdict"])
+    # Phase 2: all 9 new scenarios run, reproduce, and scorecard-match.
+    from copilot_platform.scenarios import FLAGSHIP_CONFIGS as _CFG, INDUSTRY_SCENARIOS as _IND
+    _new = ["meta_creator_recommendations", "tiktok_notifications", "linkedin_connections",
+            "marketplace_dma_ads", "uber_driver_incentives", "delivery_fee_optimization",
+            "hcp_omnichannel", "field_visits_sampling", "cross_publisher_budget"]
+    check("all 12 industry scenarios registered", len(_CFG) == 12 and
+          all(s in _CFG for ind in _IND.values() for s in ind))
+    for _sid in _new:
+        _a, _ra = run_flagship(_sid, seed=42)
+        _b, _rb = run_flagship(_sid, seed=42)
+        check(f"{_sid} seed reproducible", _a.equals(_b) and _ra["primary"]["lift_pct"] == _rb["primary"]["lift_pct"])
+        _c, _ = run_flagship(_sid, seed=7)
+        check(f"{_sid} seed changes data", not _a.equals(_c))
+        check(f"{_sid} srm passes at seed 42", _ra["srm"]["failed"] is False)
+        _cfg = dict(_CFG[_sid]); _cfg["seed"] = 42
+        _trend = _ra.pop("trend")
+        _sc = build_scorecard(_cfg, _ra, _trend, 42)
+        check(f"{_sid} scorecard lift matches engine", abs(_sc["primary_lift_pct"] - _ra["primary"]["lift_pct"]) < 1e-9)
+        check(f"{_sid} scorecard verdict matches engine", _sc["verdict"] == _ra["verdict"])
+        check(f"{_sid} scorecard segment matches engine",
+              all(abs(s["lift_pct"] - next(x for x in _ra["segments"] if x["segment"] == s["segment"])["lift_pct"]) < 1e-9
+                  for s in _sc["segments"]))
+    _df_u, _r_u = run_flagship("uber_driver_incentives", seed=42)
+    _drv = followups.driver_availability(_df_u, _r_u, "uber_driver_incentives")
+    check("uber driver utilization follow-up", _drv["supported"] and "utilization" in _drv["text"])
+    _df_f, _r_f = run_flagship("delivery_fee_optimization", seed=42)
+    check("fee contribution negative -> dont launch",
+          _r_f["verdict"] == "DONT_LAUNCH" and _r_f["business"]["contribution_usd"] < 0)
+    _ex = followups.exclude_top(_df_f, _r_f, "delivery_fee_optimization", 5)
+    check("fee exclude-top recomputes", _ex["supported"] and _ex["n_remaining"] == 195)
+    _df_x, _r_x = run_flagship("cross_publisher_budget", seed=42)
+    _pub = followups.publisher_best(_df_x, _r_x, "cross_publisher_budget")
+    check("cross-publisher shares sum to 100", _pub["supported"] and abs(sum(p["share_pct"] for p in _pub["publishers"]) - 100) < 0.1)
+    check("cross-publisher caveat present", "cannot identify" in _pub["text"])
+    _df_h, _r_h = run_flagship("hcp_omnichannel", seed=42)
+    _seg = followups.segment(_df_h, _r_h, "hcp_omnichannel", "low")
+    check("hcp low segment recomputes", _seg["supported"] and abs(_seg["lift_pct"] - next(x for x in _r_h["segments"] if x["segment"] == "low")["lift_pct"]) < 1e-9)
+    _s2 = new_session()
+    _blocks = orch.handle(_s2, action="industry", payload={"industry_id": "social"})
+    _cards = [b for b in _blocks if b["type"] == "scenario_cards"][0]["cards"]
+    check("social cards all runnable", len(_cards) == 4 and all(c["runnable"] for c in _cards))
+    _blocks = orch.handle(_s2, action="scenario", payload={"scenario_id": "tiktok_notifications"})
+    check("chat new scenario -> config card", any(b["type"] == "config" for b in _blocks) and _s2["state"] == "config")
     print("All platform tests passed.")
 
 

@@ -25,6 +25,9 @@ sys.path.insert(0, ROOT)
 
 from copilot_platform.chat import Orchestrator, new_session, welcome_blocks  # noqa: E402
 from copilot_platform.engine import FLAGSHIPS, run_flagship  # noqa: E402
+from copilot_platform.engine_extra import EXTRA_FLAGSHIPS as _EXTRA_FLAGSHIPS  # noqa: E402
+
+FLAGSHIPS.update(_EXTRA_FLAGSHIPS)
 from copilot_platform.scorecard import build_scorecard, example_scorecard  # noqa: E402
 from copilot_platform.scenarios import FLAGSHIP_CONFIGS  # noqa: E402
 

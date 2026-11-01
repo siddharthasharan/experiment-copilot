@@ -22,13 +22,34 @@ def build_scorecard(config, result, trend, seed):
             {"label": "95% CI", "value": f"[{primary['ci_low_pct']:+.2f}%, {primary['ci_high_pct']:+.2f}%]"},
             {"label": "P-value", "value": f"{primary['p_value']:.3g}"},
             {"label": f"Randomized {result['unit']}", "value": f"{result['n_units']:,}"}]
+    # Each KPI is guarded by its own key: Phase 2 business dicts carry
+    # different economics (DMA ads have spend but no contribution, Uber
+    # has trips, HCP has interactions), and an unguarded lookup crashed
+    # the scorecard for DMA ads (caught by the Phase 2 tests).
     if "incremental_orders" in business:
         kpis.append({"label": "Incremental orders", "value": f"{business['incremental_orders']:,.0f}"})
+    if "contribution_usd" in business:
         kpis.append({"label": "Contribution", "value": f"${business['contribution_usd']:,.0f}"})
+    if "cost_per_incremental_order_usd" in business:
         kpis.append({"label": "Cost / incremental order", "value": f"${business['cost_per_incremental_order_usd']:,.2f}"})
+    if "incremental_spend_usd" in business:
+        kpis.append({"label": "Incremental spend", "value": f"${business['incremental_spend_usd']:,.0f}"})
     if "incremental_starts" in business:
         kpis.append({"label": "Incremental treatment starts", "value": f"{business['incremental_starts']:,.0f}"})
+    if "cost_per_incremental_start_usd" in business:
         kpis.append({"label": "Cost / incremental start", "value": f"${business['cost_per_incremental_start_usd']:,.0f}"})
+    if "incremental_trips" in business:
+        kpis.append({"label": "Incremental trips", "value": f"{business['incremental_trips']:,.0f}"})
+    if "cost_per_incremental_trip_usd" in business:
+        kpis.append({"label": "Cost / incremental trip", "value": f"${business['cost_per_incremental_trip_usd']:,.2f}"})
+    if "incremental_interactions" in business:
+        kpis.append({"label": "Incremental interactions", "value": f"{business['incremental_interactions']:,.0f}"})
+    if "cost_per_incremental_interaction_usd" in business:
+        kpis.append({"label": "Cost / incremental interaction", "value": f"${business['cost_per_incremental_interaction_usd']:,.2f}"})
+    if "incremental_rx" in business:
+        kpis.append({"label": "Incremental prescriptions", "value": f"{business['incremental_rx']:,.0f}"})
+    if "cost_per_incremental_rx_usd" in business:
+        kpis.append({"label": "Cost / incremental prescription", "value": f"${business['cost_per_incremental_rx_usd']:,.2f}"})
     # Cumulative incremental impact (from trend: treatment-control per period, cumulated).
     cum = []
     total = 0.0
@@ -45,7 +66,9 @@ def build_scorecard(config, result, trend, seed):
     # business dict is empty — it is an engagement experiment, not a priced
     # promotion). Each branch states its own numbers inline, so the PM tab
     # stands alone on every scenario.
-    if "contribution_usd" in business:
+    if business.get("impact_text"):
+        impact = business["impact_text"]
+    elif "contribution_usd" in business:
         impact = (f"Incremental orders: {business['incremental_orders']:,.0f}. Contribution: "
                   f"${business['contribution_usd']:,.0f}. Cost per incremental order: "
                   f"${business['cost_per_incremental_order_usd']:,.2f}. Those figures come from "
@@ -89,13 +112,18 @@ def build_scorecard(config, result, trend, seed):
     seg_text = "; ".join(
         f"{s['segment']}: {s['lift_pct']:+.2f}% (95% CI [{s['ci_low_pct']:+.2f}%, {s['ci_high_pct']:+.2f}%], "
         f"p={s['p_value']:.3g})" for s in segments) or "No segments for this experiment."
-    if result["unit"] in ("ZIPs", "DMAs"):
+    if result["unit"] in ("ZIPs", "DMAs", "Cities", "Territories"):
         sensitivity = ("Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
                        "data: ask in chat to 'exclude the largest units' or to look at a single "
                        "segment. If the headline conclusion flips under those checks, it was fragile.")
-    else:
+    elif result["unit"] == "users":
         sensitivity = ("Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
                        "data: ask in chat to look at a single segment (new vs established users). "
+                       "Excluding the largest units does not apply here — there are no geo units to "
+                       "exclude. If the headline conclusion flips under a segment check, it was fragile.")
+    else:
+        sensitivity = ("Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
+                       "data: ask in chat to look at a single segment. "
                        "Excluding the largest units does not apply here — there are no geo units to "
                        "exclude. If the headline conclusion flips under a segment check, it was fragile.")
     ds = {
@@ -113,12 +141,12 @@ def build_scorecard(config, result, trend, seed):
                 f"SRM checks only that the assignment split matches the design — a pass does not "
                 f"by itself prove the lift is robust. That is what the sensitivity checks below are for."),
         "clustering": ("Geo experiment: analysis is at the geo level, so clustering is handled by "
-                       "the unit of analysis itself." if result["unit"] in ("ZIPs", "DMAs")
+                       "the unit of analysis itself." if result["unit"] in ("ZIPs", "DMAs", "Cities", "Territories")
                        else "User-level randomization; no cluster adjustment required."),
         "interference": ("Spillover is a live risk in geo designs: neighbouring control units can be "
                          "affected. The follow-up 'exclude largest markets' and segment checks are "
                          "sensitivity analyses, not spillover proof."
-                         if result["unit"] in ("ZIPs", "DMAs") else
+                         if result["unit"] in ("ZIPs", "DMAs", "Cities", "Territories") else
                          "No geographic spillover structure in a user-level design."),
         "hte": (f"Segment effects from this run: {seg_text} Segment results are descriptive "
                 f"unless pre-specified."),
@@ -130,7 +158,7 @@ def build_scorecard(config, result, trend, seed):
         watchouts.append("Randomization failure (SRM): the assignment split does not match the design. Do not trust any lift from this run.")
     if result["guardrail_failed"]:
         watchouts.append("Guardrail failure: a guardrail metric moved significantly against the launch bar. Guardrails veto a launch even when the primary is significant.")
-    if result["unit"] in ("ZIPs", "DMAs"):
+    if result["unit"] in ("ZIPs", "DMAs", "Cities", "Territories"):
         watchouts.append("Geographic spillover: treated and control units in the same market/DMA region can contaminate each other. The analysis unit is the geo, not the user or impression inside it.")
         watchouts.append("Multiple-testing: segment and follow-up checks are exploratory unless pre-specified; do not cherry-pick the segment that looks best.")
     if result["unit"] == "DMAs":
