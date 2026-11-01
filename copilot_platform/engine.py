@@ -177,7 +177,9 @@ def analyze_reddit(df, progress=None):
     segments = []
     for seg, sub in df.groupby("segment"):
         tr = sub["group"] == "treatment"
-        segments.append({"segment": seg, **welch_lift(sub.loc[~tr, "post_replies"], sub.loc[tr, "post_replies"])})
+        # Same CUPED estimator as the chat follow-up segments, so the
+        # scorecard segment table and the chat segment answer agree.
+        segments.append({"segment": seg, **cuped_lift(sub["post_replies"].values, sub["pre_replies"].values, tr.values)})
     metrics = [
         {"name": "Meaningful replies / user", "control": primary["control_mean"], "treatment": primary["treatment_mean"],
          "lift_pct": primary["lift_pct"], "ci_low_pct": primary["ci_low_pct"], "ci_high_pct": primary["ci_high_pct"],
@@ -301,7 +303,10 @@ def analyze_doordash(df, progress=None):
     ]
     segments = []
     for seg, col in [("new customers", "orders_new"), ("returning customers", "orders_returning")]:
-        segments.append({"segment": seg, **welch_lift(df.loc[~treat, col], df.loc[treat, col])})
+        # Same CUPED-with-derived-pre estimator as the follow-up segments.
+        share = (df[col] / df["post_orders"]).fillna(0)
+        pre_seg = df["pre_orders"] * share
+        segments.append({"segment": seg, **cuped_lift(df[col].values, pre_seg.values, treat.values)})
     return {"primary": primary, "guardrail": deliv, "cancellation": canc, "srm": srm,
             "verdict": verdict, "segments": segments, "metrics": metrics,
             "guardrail_failed": guard_failed, "n_units": int(len(df)), "unit": "ZIPs",
@@ -416,7 +421,9 @@ def analyze_pharma(df, progress=None):
     for seg, mask in [("high payer access", df["payer_access"] >= 0.5), ("low payer access", df["payer_access"] < 0.5)]:
         sub = df[mask]
         tr = sub["group"] == "treatment"
-        segments.append({"segment": seg, **welch_lift(sub.loc[~tr, "post_starts_adjusted"], sub.loc[tr, "post_starts_adjusted"])})
+        # Same CUPED estimator as the follow-up segments, so scorecard and
+        # chat segment numbers agree.
+        segments.append({"segment": seg, **cuped_lift(sub["post_starts_adjusted"].values, sub["pre_starts"].values, tr.values)})
     publishers = []
     for pub, col in [("Publisher A", "publisher_a_impr"), ("Publisher B", "publisher_b_impr"), ("Publisher C", "publisher_c_impr")]:
         publishers.append({"publisher": pub, "impressions": float(df[col].sum()),

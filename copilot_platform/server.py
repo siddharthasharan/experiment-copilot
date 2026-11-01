@@ -112,31 +112,136 @@ def _run_thread(session):
             session["run"] = {"done": True, "stages": stages, "error": str(e)}
 
 
-def _pdf_bytes(title, lines):
-    """Minimal hand-rolled PDF (text only, stdlib). No dependency, no cost."""
-    content = []
-    y = 750
-    content.append("BT /F1 16 Tf 50 780 Td (Experiment Copilot — Executive Scorecard) Tj ET")
-    content.append(f"BT /F1 12 Tf 50 755 Td ({title}) Tj ET")
-    for line in lines:
-        safe = line.replace("(", "[").replace(")", "]").replace("\\", "")[:110]
-        content.append(f"BT /F1 10 Tf 50 {y} Td ({safe}) Tj ET")
-        y -= 14
-        if y < 40:
-            break
-    body = "\n".join(content)
-    objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
-            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
-            f"<< /Length {len(body)} >>\nstream\n{body}\nendstream".encode(),
-            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+def _pdf_clean(text):
+    """ASCII-only text for the standard Helvetica fonts.
+
+    The old PDF wrote UTF-8 bytes (em dashes, etc.) into a WinAnsi font,
+    which rendered as mojibake ("a" after "Copilot") and overlapped lines.
+    """
+    repl = {"\u2014": "-", "\u2013": "-", "\u00b7": "-", "\u2019": "'",
+            "\u201c": '"', "\u201d": '"', "\u00b1": "+/-", "\u2264": "<=",
+            "\u2265": ">=", "\u00d7": "x"}
+    for k, v in repl.items():
+        text = text.replace(k, v)
+    return text.encode("ascii", "ignore").decode("ascii")
+
+
+def _pdf_wrap(text, width=92):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 > width and cur:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+
+def _executive_pdf(sc):
+    """Executive scorecard PDF: dashboard sections + clear recommendation.
+
+    Hand-rolled, stdlib only, multi-page, no overlapping lines: every
+    line gets its own y position with proper spacing, headings are bold,
+    and the recommendation is boxed and large. Sections mirror the web
+    scorecard (decision, KPIs, metrics, PM view, watch-outs) so the PDF
+    is a dashboard on paper, not a dump of raw lines.
+    """
+    import datetime
+    items = []  # (kind, text) — kind: title, name, rec, h2, body, bullet
+    items.append(("title", "Experiment Copilot - Executive Scorecard"))
+    items.append(("name", sc["experiment_name"]))
+    items.append(("rec", "RECOMMENDATION: " + sc["recommendation"]))
+    if sc.get("business_reason"):
+        items.extend(("body", l) for l in _pdf_wrap(sc["business_reason"]))
+    items.append(("h2", "Decision at a glance"))
+    dec = [f"Primary metric: {sc['primary_metric']}"]
+    if sc["primary_lift_pct"] is not None:
+        dec.append(f"Lift: {sc['primary_lift_pct']:+.2f}%  |  95% CI: [{sc['ci_low_pct']:+.2f}%, {sc['ci_high_pct']:+.2f}%]  |  p = {sc['p_value']:.3g}")
+    dec.append(f"Guardrails: {sc['guardrail_status']}  |  SRM: {sc['srm_status']}  |  Seed: {sc['seed']}")
+    if sc.get("precomputed"):
+        dec.append("Precomputed demonstration (1M users, seed 42) - not a live run.")
+    items.extend(("body", l) for d in dec for l in _pdf_wrap(d))
+    items.append(("h2", "Key metrics"))
+    for k in sc.get("kpis", []):
+        items.extend(("body", l) for l in _pdf_wrap(f"{k['label']}: {k['value']}"))
+    items.append(("h2", "Metrics table"))
+    for m in sc.get("metrics", []):
+        lift = m.get("lift_pct")
+        row = f"{m.get('name', 'metric')}: lift {lift:+.2f}%" if lift is not None else f"{m.get('name', 'metric')}"
+        if m.get("p_value") is not None:
+            row += f", p = {m['p_value']:.3g}"
+        if m.get("guardrail"):
+            row += " (guardrail)"
+        items.extend(("body", l) for l in _pdf_wrap(row))
+    pm = sc.get("pm", {})
+    items.append(("h2", "PM view"))
+    for label, key in [("What happened?", "what"), ("Why does it matter?", "why"),
+                       ("Business impact", "impact"), ("Should we launch?", "launch"),
+                       ("What should we do next?", "next")]:
+        if pm.get(key):
+            items.append(("body", label))
+            items.extend(("body", l) for l in _pdf_wrap(pm[key]))
+    if sc.get("watchouts"):
+        items.append(("h2", "Watch-outs and limitations"))
+        for w in sc["watchouts"]:
+            items.extend(("bullet", l) for l in _pdf_wrap(w))
+    items.append(("h2", "About this scorecard"))
+    items.extend(("body", l) for l in _pdf_wrap(
+        f"Synthetic demo data - not real user data. Generated: "
+        f"{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M UTC')} | "
+        f"Platform version: platform-1.0 | Experiment: {sc['experiment_name']}"))
+    # Paginate: (font, size, height) per kind; new page when y would drop below 50.
+    spec = {"title": ("F2", 16, 26), "name": ("F2", 13, 22), "rec": ("F2", 17, 34),
+            "h2": ("F2", 11, 20), "body": ("F1", 10, 14), "bullet": ("F1", 10, 14)}
+    pages, cur, y = [], [], 760
+    for kind, text in items:
+        font, size, h = spec[kind]
+        if y - h < 50:
+            pages.append(cur)
+            cur, y = [], 760
+        if kind == "bullet":
+            text = "- " + text
+        cur.append((kind, font, size, y, _pdf_clean(text)))
+        y -= h
+    if cur:
+        pages.append(cur)
+    # Build objects: 1 catalog, 2 pages root, then per page (page, content),
+    # then fonts. Page ids and content ids are computed, not guessed.
+    n = len(pages)
+    page_ids = [3 + 2 * i for i in range(n)]
+    content_ids = [4 + 2 * i for i in range(n)]
+    font_reg, font_bold = 3 + 2 * n, 4 + 2 * n
+    objs = {}
+    objs[1] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    kids = " ".join(f"{pid} 0 R" for pid in page_ids)
+    objs[2] = f"<< /Type /Pages /Kids [{kids}] /Count {n} >>".encode()
+    for i, page in enumerate(pages):
+        parts = []
+        for kind, font, size, line_y, text in page:
+            if kind == "rec":
+                parts.append(f"0.42 0.16 0.85 RG 1 w 50 {line_y - 8} 512 28 re S")
+            safe = text.replace("\\", "").replace("(", "[").replace(")", "]")
+            parts.append(f"BT /{font} {size} Tf 50 {line_y} Td ({safe}) Tj ET")
+        body = "\n".join(parts).encode("latin-1", "ignore")
+        objs[page_ids[i]] = (f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                             f"/Contents {content_ids[i]} 0 R /Resources << /Font << /F1 {font_reg} 0 R "
+                             f"/F2 {font_bold} 0 R >> >> >>").encode()
+        objs[content_ids[i]] = (f"<< /Length {len(body)} >>\nstream\n".encode() + body + b"\nendstream")
+    objs[font_reg] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    objs[font_bold] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>"
     out = bytearray(b"%PDF-1.4\n")
     offsets = []
-    for i, obj in enumerate(objs, start=1):
+    for i in range(1, max(objs) + 1):
         offsets.append(len(out))
-        out += f"{i} 0 obj\n".encode() + obj + b"\nendobj\n"
+        out += f"{i} 0 obj\n".encode() + objs[i] + b"\nendobj\n"
     xref = len(out)
-    out += f"xref\n0 {len(objs) + 1}\n0000000000 65535 f \n".encode()
+    out += f"xref\n0 {max(objs) + 1}\n0000000000 65535 f \n".encode()
+    for off in offsets:
+        out += f"{off:010d} 00000 n \n".encode()
+    out += f"trailer\n<< /Size {max(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    return bytes(out)
     for off in offsets:
         out += f"{off:010d} 00000 n \n".encode()
     out += f"trailer\n<< /Size {len(objs) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
@@ -239,13 +344,7 @@ class Handler(BaseHTTPRequestHandler):
                                 m["ci_low_pct"], m["ci_high_pct"], m["p_value"], m.get("method", "")])
                 return self._send_bytes(buf.getvalue().encode(), "text/csv", "metrics.csv")
             if typ == "pdf":
-                lines = [f"Experiment: {sc['experiment_name']}", f"Recommendation: {sc['recommendation']}",
-                         f"Primary metric: {sc['primary_metric']}",
-                         f"Lift: {sc['primary_lift_pct']:+.2f}%  CI [{sc['ci_low_pct']:+.2f}%, {sc['ci_high_pct']:+.2f}%]  p={sc['p_value']:.3g}",
-                         f"Guardrails: {sc['guardrail_status']}  SRM: {sc['srm_status']}  Seed: {sc['seed']}"]
-                for m in sc["metrics"]:
-                    lines.append(f"{m['name']}: {m['lift_pct']:+.2f}% p={m['p_value']:.3g}")
-                return self._send_bytes(_pdf_bytes(sc["experiment_name"], lines), "application/pdf", "scorecard.pdf")
+                return self._send_bytes(_executive_pdf(sc), "application/pdf", "scorecard.pdf")
             return self._send_json({"error": "unknown download type"}, 400)
         return self._send_json({"error": "not found"}, 404)
 

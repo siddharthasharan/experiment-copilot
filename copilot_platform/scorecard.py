@@ -39,6 +39,29 @@ def build_scorecard(config, result, trend, seed):
                  "ci_low_pct": s["ci_low_pct"], "ci_high_pct": s["ci_high_pct"],
                  "p_value": s["p_value"]} for s in result.get("segments", [])]
     business_note = result.get("business_reason") or ""
+    # PM impact must be self-contained and scenario-specific. The old text
+    # pointed at "KPI cards above", which do not exist on the PM tab at all,
+    # and claimed contribution/cost figures that Reddit does not have (its
+    # business dict is empty — it is an engagement experiment, not a priced
+    # promotion). Each branch states its own numbers inline, so the PM tab
+    # stands alone on every scenario.
+    if "contribution_usd" in business:
+        impact = (f"Incremental orders: {business['incremental_orders']:,.0f}. Contribution: "
+                  f"${business['contribution_usd']:,.0f}. Cost per incremental order: "
+                  f"${business['cost_per_incremental_order_usd']:,.2f}. Those figures come from "
+                  f"the generated data, not from the headline lift alone — a positive order lift "
+                  f"can still lose money once promotion costs are counted.")
+    elif "incremental_starts" in business:
+        impact = (f"Incremental treatment starts: {business['incremental_starts']:,.0f}. "
+                  f"Cost per incremental start: ${business['cost_per_incremental_start_usd']:,.0f}. "
+                  f"Incremental spend: ${business['incremental_spend_usd']:,.0f}. Those figures come "
+                  f"from the generated data, not from the headline lift alone.")
+    else:
+        impact = (f"No contribution or cost figures for this design — it is an engagement "
+                  f"experiment, not a priced promotion. The business impact is the primary lift "
+                  f"itself: {config['primary']} moved {_pct(primary['lift_pct'])} across "
+                  f"{result['n_units']:,} {result['unit']}, with guardrails "
+                  f"{'failed' if result['guardrail_failed'] else 'passed'}.")
     pm = {
         "what": f"{config['name']}: {config['hypothesis']} The primary metric, {config['primary']}, "
                 f"moved {_pct(primary['lift_pct'])} (95% CI [{primary['ci_low_pct']:+.2f}%, {primary['ci_high_pct']:+.2f}%], "
@@ -47,31 +70,60 @@ def build_scorecard(config, result, trend, seed):
                f"{'failed' if result['srm']['failed'] else 'passed'}, guardrails "
                f"{'failed' if result['guardrail_failed'] else 'passed'}. "
                f"{business_note}",
-        "impact": ("Contribution and cost figures are in the KPI cards above, computed from the "
-                   "generated data — not from the headline lift alone."),
+        "impact": impact,
         "launch": verdict_label + ".",
         "next": ("If launching, monitor the guardrail metrics in the rollout; if not, fix the "
                  "flagged issue and re-run rather than re-reading this run until it looks good."),
     }
+    # DS-view fixes, bundled with the PM impact fix (same scorecard.py):
+    # - SRM is shown because it checks the randomization split — it does NOT
+    #   by itself prove the lift is robust. Saying so in the line itself
+    #   stops the "SRM passed, so why check anything else?" confusion.
+    # - HTE no longer points at a "charts section" that is not on this tab;
+    #   the segment numbers are stated inline, so the DS tab stands alone.
+    # - Sensitivity no longer says "re-run": follow-ups are re-analyses of
+    #   THIS SAME run, not new experiments and not new data. It is also
+    #   scenario-specific: excluding the largest units only exists for geo
+    #   experiments — for a user-level experiment it is not an option, and
+    #   saying so was wrong.
+    seg_text = "; ".join(
+        f"{s['segment']}: {s['lift_pct']:+.2f}% (95% CI [{s['ci_low_pct']:+.2f}%, {s['ci_high_pct']:+.2f}%], "
+        f"p={s['p_value']:.3g})" for s in segments) or "No segments for this experiment."
+    if result["unit"] in ("ZIPs", "DMAs"):
+        sensitivity = ("Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
+                       "data: ask in chat to 'exclude the largest units' or to look at a single "
+                       "segment. If the headline conclusion flips under those checks, it was fragile.")
+    else:
+        sensitivity = ("Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
+                       "data: ask in chat to look at a single segment (new vs established users). "
+                       "Excluding the largest units does not apply here — there are no geo units to "
+                       "exclude. If the headline conclusion flips under a segment check, it was fragile.")
     ds = {
         "estimand": f"Average treatment effect on {config['primary']} for the tested population.",
         "unit": config["unit"],
         "estimator": config["method"],
-        "se": f"Welch SEs at the {result['unit']} level; primary n: control {primary['n_control']:,}, treatment {primary['n_treatment']:,}.",
+        "se": (f"CUPED-adjusted Welch SEs at the {result['unit']} level; primary n: control "
+               f"{primary['n_control']:,}, treatment {primary['n_treatment']:,}.")
+              if primary.get("variance_reduction_pct") is not None else
+              (f"Welch SEs at the {result['unit']} level; primary n: control "
+               f"{primary['n_control']:,}, treatment {primary['n_treatment']:,}."),
         "cuped": (f"CUPED variance reduction {primary.get('variance_reduction_pct', 0):.0f}%."
                   if primary.get("variance_reduction_pct") is not None else "No CUPED adjustment for this design."),
-        "srm": f"SRM p={result['srm']['p_value']:.3f} ({'FAIL' if result['srm']['failed'] else 'pass'}).",
+        "srm": (f"SRM p={result['srm']['p_value']:.3f} ({'FAIL' if result['srm']['failed'] else 'pass'}). "
+                f"SRM checks only that the assignment split matches the design — a pass does not "
+                f"by itself prove the lift is robust. That is what the sensitivity checks below are for."),
         "clustering": ("Geo experiment: analysis is at the geo level, so clustering is handled by "
                        "the unit of analysis itself." if result["unit"] in ("ZIPs", "DMAs")
                        else "User-level randomization; no cluster adjustment required."),
         "interference": ("Spillover is a live risk in geo designs: neighbouring control units can be "
-                         "affected. See the watch-outs tab; the follow-up 'exclude largest markets' "
-                         "and segment checks are sensitivity analyses, not spillover proof."
+                         "affected. The follow-up 'exclude largest markets' and segment checks are "
+                         "sensitivity analyses, not spillover proof."
                          if result["unit"] in ("ZIPs", "DMAs") else
                          "No geographic spillover structure in a user-level design."),
-        "hte": "Segment effects are in the charts section; segment results are descriptive unless pre-specified.",
+        "hte": (f"Segment effects from this run: {seg_text} Segment results are descriptive "
+                f"unless pre-specified."),
         "assumptions": "Random assignment, no differential attrition, and (for pre-period adjustment) that the pre-period covariate is not affected by treatment.",
-        "sensitivity": "Re-run the follow-ups: exclude the largest units, or look at a single segment. If the headline conclusion flips, it was fragile.",
+        "sensitivity": sensitivity,
     }
     watchouts = []
     if result["srm"]["failed"]:

@@ -181,13 +181,22 @@ class Orchestrator:
             return [_text("What would you like to change? One thing at a time:"),
                     _chips(["Duration", "Seed"])]
         if action == "explain" or low == "explain methodology":
+            # The unit sentence is scenario-specific: a generic geo sentence
+            # in a user-level explanation is confusing (and wrong in context),
+            # even though the underlying principle is the same.
+            if "ZIP" in cfg["unit"] or "DMA" in cfg["unit"]:
+                unit_note = ("The analysis unit is the randomization unit — here that is the "
+                             "ZIP/DMA, never the impressions or users inside a geo counted as "
+                             "independent units.")
+            else:
+                unit_note = ("The analysis unit is the randomization unit — here that is the "
+                             "user, so each user counts once, and impressions or sessions from "
+                             "the same user are never treated as independent experiments.")
             blocks = [_text(f"Methodology for {cfg['name']}:\n\n"
                             f"Design: {cfg['unit']}. Primary metric: {cfg['primary']}. "
                             f"Method: {cfg['method']}.\n\n"
                             f"Guardrails: {cfg['guardrails']}\n\n"
-                            f"The analysis unit is the randomization unit — that is why geo experiments "
-                            f"are analysed at ZIP/DMA level, never by counting impressions or users inside "
-                            f"a geo as independent units."),
+                            f"{unit_note}"),
                       self._config_block(cfg)]
             return blocks + self._llm_note(f"Explain the methodology of {cfg['name']}")
         return [_text("You can run this design, modify it, or ask me to explain the methodology."),
