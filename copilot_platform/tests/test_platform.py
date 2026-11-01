@@ -102,6 +102,13 @@ def main():
     _df_h, _r_h = run_flagship("hcp_omnichannel", seed=42)
     _seg = followups.segment(_df_h, _r_h, "hcp_omnichannel", "low")
     check("hcp low segment recomputes", _seg["supported"] and abs(_seg["lift_pct"] - next(x for x in _r_h["segments"] if x["segment"] == "low")["lift_pct"]) < 1e-9)
+    # Routing regression (2026-10-31): a message naming a platform AND a
+    # topic word must route to the platform, not the topic — "LinkedIn
+    # ... top creators ..." used to route to Meta via "creator".
+    _s3 = new_session()
+    orch.handle(_s3, action="industry", payload={"industry_id": "social"})
+    orch.handle(_s3, message="In linkedin i want to see if top creators with 100,000+ followers crowd out the lower follower count 1000-10000 followers creators")
+    check("platform name beats topic word in routing", _s3.get("scenario_id") == "linkedin_connections")
     _s2 = new_session()
     _blocks = orch.handle(_s2, action="industry", payload={"industry_id": "social"})
     _cards = [b for b in _blocks if b["type"] == "scenario_cards"][0]["cards"]

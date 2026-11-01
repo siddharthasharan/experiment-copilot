@@ -242,30 +242,50 @@ class Orchestrator:
     def _handle_custom(self, session, text, low):
         if not text:
             return [_text("Tell me what you'd like to test, in your own words, or pick a card above.")]
-        if "reddit" in low or "feed" in low:
+        # Platform names win over topic words. The old order checked
+        # "creator" before "linkedin", so "In LinkedIn, do top creators
+        # crowd out small creators?" routed to Meta — the topic word
+        # beat the platform the user actually named. Check every
+        # platform first, then fall back to topic words.
+        if "reddit" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "reddit_feed_ranking"})
-        if "meta" in low or "creator" in low:
-            return self.handle(session, action="scenario", payload={"scenario_id": "meta_creator_recommendations"})
-        if "tiktok" in low or "notification" in low:
-            return self.handle(session, action="scenario", payload={"scenario_id": "tiktok_notifications"})
-        if "linkedin" in low or "connection" in low:
+        if "linkedin" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "linkedin_connections"})
-        if "doordash" in low or "promotion" in low or "zip" in low:
+        if "meta" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "meta_creator_recommendations"})
+        if "tiktok" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "tiktok_notifications"})
+        if "doordash" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "doordash_zip_promotion"})
-        if "uber" in low or "driver incentive" in low:
+        if "uber" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "uber_driver_incentives"})
-        if "fee" in low:
-            return self.handle(session, action="scenario", payload={"scenario_id": "delivery_fee_optimization"})
-        if "hcp" in low or "omnichannel" in low:
-            return self.handle(session, action="scenario", payload={"scenario_id": "hcp_omnichannel"})
-        if "field" in low or "sampling" in low or "visit" in low:
-            return self.handle(session, action="scenario", payload={"scenario_id": "field_visits_sampling"})
         if "cross-publisher" in low or "cross publisher" in low or "budget allocation" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "cross_publisher_budget"})
+        if "field" in low or "sampling" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "field_visits_sampling"})
+        if "hcp" in low or "omnichannel" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "hcp_omnichannel"})
         if "dma" in low and ("advertis" in low or "marketplace" in low):
             return self.handle(session, action="scenario", payload={"scenario_id": "marketplace_dma_ads"})
         if "pharma" in low or "publisher" in low or "dma" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "pharma_dma_publisher"})
+        # Topic-word fallbacks, only when no platform was named.
+        if "feed" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "reddit_feed_ranking"})
+        if "creator" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "meta_creator_recommendations"})
+        if "notification" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "tiktok_notifications"})
+        if "connection" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "linkedin_connections"})
+        if "promotion" in low or "zip" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "doordash_zip_promotion"})
+        if "driver incentive" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "uber_driver_incentives"})
+        if "fee" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "delivery_fee_optimization"})
+        if "visit" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "field_visits_sampling"})
         # Existing scenario by name (old chat behaviour, preserved).
         for e in self.examples:
             if e["title"].lower() in low or e["id"].replace("_", " ") in low:
