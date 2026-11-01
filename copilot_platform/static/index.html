@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experiment Copilot — Chat-first experimentation</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <nav id="nav">
+    <div class="brand">Experiment Copilot</div>
+    <button class="navbtn active" data-view="chat">Chat with Copilot</button>
+    <button class="navbtn" data-view="new">New Experiment</button>
+    <button class="navbtn" data-view="saved">Saved Experiments</button>
+    <button class="navbtn" data-view="examples">Example Scenarios</button>
+    <button class="navbtn" data-view="explorer">Data Explorer</button>
+    <button class="navbtn" data-view="docs">Documentation</button>
+    <div class="note">Deterministic chat — no LLM, no API key. Every number comes from the statistical engine running on generated data. Sessions live in server memory and are lost on restart.</div>
+  </nav>
+
+  <main id="main">
+    <div id="chat-header">
+      <div><h1>Chat with Copilot</h1><div class="sub">Design, run, and interpret experiments in conversation. The scorecard opens beside the chat after a run.</div></div>
+      <button class="btn secondary" id="open-results">Show scorecard</button>
+    </div>
+    <div id="messages"></div>
+    <div id="inputbar">
+      <input id="input" placeholder="Ask about an experiment, pick a card, or describe a custom experiment…">
+      <button class="btn" id="send">Send</button>
+    </div>
+
+    <div class="view" id="view-saved"></div>
+    <div class="view" id="view-docs">
+      <h2>Documentation</h2>
+      <div class="view-section">
+        <h3>How it works</h3>
+        <p>Pick an industry in chat, pick a scenario, confirm or modify the design, and run it. The server generates seeded synthetic data, runs the statistical engine in real stages (data generation, validation, assignment, balance, metrics, guardrails, scorecard), and opens the scorecard beside the chat. Follow-ups like “Exclude the five largest markets” or “Show results for new customers” recompute from the stored experiment data — they are not canned answers.</p>
+        <h3>Decision rules</h3>
+        <p>SRM failure → Invalid. Guardrail failure → Do Not Launch. Significant positive primary with guardrails passed → Launch. Significant negative → Do Not Launch. Otherwise Inconclusive. For DoorDash, a negative contribution as designed also yields Do Not Launch, with the reason stated on the scorecard.</p>
+        <h3>What is precomputed, honestly</h3>
+        <p>The 14 example scenarios are precomputed demonstrations (1M users, seed 42, recorded engine output). They are labelled as such everywhere. The three flagships are generated and analysed live on every run.</p>
+        <h3>Adding an LLM later</h3>
+        <p>The chat orchestrator accepts one optional <code>LLMAdapter.explain()</code> method. It may add an explanation after a deterministic answer. It may not choose scenarios, set configs, compute metrics, or replace a deterministic block. The engine does not change.</p>
+        <h3>Limitations</h3>
+        <p>All data is synthetic. Geo experiments are analysed at geo level, never by counting impressions inside a geo. A geo allocation experiment cannot identify individual publisher causal effects. Segment and follow-up checks are exploratory unless pre-specified.</p>
+      </div>
+    </div>
+    <div class="view" id="view-chat"></div>
+  </main>
+
+  <section id="results">
+    <header>
+      <div><b id="results-title">Scorecard</b><div style="font-size:12px;color:#6b7280">Contextual results workspace — the chat stays open beside it.</div></div>
+      <div style="display:flex;gap:8px;align-items:center"><span id="results-verdict" class="verdict"></span><button class="btn secondary" id="close-results">Collapse</button></div>
+    </header>
+    <div class="tabs">
+      <button data-tab="scorecard" class="active">Scorecard</button>
+      <button data-tab="pm">PM view</button>
+      <button data-tab="ds">Data Scientist view</button>
+      <button data-tab="watch">Watch-outs</button>
+      <button data-tab="explorer">Data Explorer</button>
+      <button data-tab="downloads">Downloads</button>
+    </div>
+    <div id="results-body">
+      <div id="tab-scorecard" class="tab-pane"></div>
+      <div id="tab-pm" class="tab-pane" style="display:none"></div>
+      <div id="tab-ds" class="tab-pane" style="display:none"></div>
+      <div id="tab-watch" class="tab-pane" style="display:none"></div>
+      <div id="tab-explorer" class="tab-pane" style="display:none"></div>
+      <div id="tab-downloads" class="tab-pane" style="display:none"></div>
+    </div>
+  </section>
+</div>
+<script src="/static/app.js"></script>
+<script>
+  // Downloads tab is populated when the scorecard opens.
+  const _open = window.openScorecard;
+  window.openScorecard = function (sc) {
+    _open(sc);
+    document.getElementById("tab-downloads").innerHTML = '<div class="view-section"><h3>Downloads</h3><p>Every download carries the experiment name, seed, and analysis from this run.</p>' + downloads() + '</div>';
+  };
+</script>
+</body>
+</html>
