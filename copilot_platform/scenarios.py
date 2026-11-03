@@ -245,6 +245,63 @@ FLAGSHIP_CONFIGS.update({
         "followups": ["Why is this statistically significant?", "Exclude the five largest territories",
                       "What are the five largest territories?", "Show results for large territories", "Show results for small territories"],
     },
+    "switchback_sos_pricing": {
+        "id": "switchback_sos_pricing", "industry": "marketplace",
+        "title": "Switchback: DoorDash-style SOS pricing across delivery zones",
+        "name": "SOS pricing switchback experiment",
+        "hypothesis": "Switching SOS pricing on and off by zone-window will raise the on-time delivery rate, because throttled demand and motivated supply let the fleet keep up — without losing too many orders to the fee.",
+        "treatment": "SOS pricing on in treated zone-windows",
+        "control": "SOS pricing off",
+        "unit": "Region x time window (randomized per zone-window; zone-windows are the analysis units, not deliveries)",
+        "population": "40 delivery zones x 112 windows (28 days, 4 windows/day; seed 42)",
+        "baseline": "Pre-period on-time delivery rate per zone",
+        "duration": "28 days",
+        "primary": "On-time delivery rate per zone-window",
+        "secondary": ["Orders per zone-window (guardrail)"],
+        "guardrails": "Orders per zone-window must not fall significantly by more than 10%; SRM must pass.",
+        "method": "Unit means with cluster-robust SEs by zone; first window after each switch excluded as washout; SRM checked on all windows",
+        "followups": ["Why is this statistically significant?", "Explain the washout and carryover",
+                      "Exclude the five largest zones", "What are the five largest zones?",
+                      "Show results for large zones", "Show results for small zones"],
+    },
+    "switchback_surge": {
+        "id": "switchback_surge", "industry": "marketplace",
+        "title": "Switchback: Uber-style surge multiplier across cities",
+        "name": "Surge multiplier switchback experiment",
+        "hypothesis": "Switching a surge multiplier on and off by city-window will raise the trip completion rate, because higher pay brings drivers out — at a bonus cost that must be weighed against the incremental trips.",
+        "treatment": "Surge multiplier on in treated city-windows",
+        "control": "No surge multiplier",
+        "unit": "Region x time window (randomized per city-window; city-windows are the analysis units, not trips)",
+        "population": "30 cities x 112 windows (28 days, 4 windows/day; seed 42)",
+        "baseline": "Pre-period trip completion rate per city",
+        "duration": "28 days",
+        "primary": "Trip completion rate per city-window",
+        "secondary": ["Rider cancellation rate (guardrail)", "Cost per incremental trip"],
+        "guardrails": "Rider cancellations must not rise significantly by more than 20%; SRM must pass.",
+        "method": "Unit means with cluster-robust SEs by city; first window after each switch excluded as washout; SRM checked on all windows",
+        "followups": ["Why is this statistically significant?", "Explain the washout and carryover",
+                      "Exclude the five largest cities", "What are the five largest cities?",
+                      "Show results for large cities", "Show results for small cities"],
+    },
+    "switchback_batching": {
+        "id": "switchback_batching", "industry": "marketplace",
+        "title": "Switchback: dispatch batching algorithm across delivery zones",
+        "name": "Dispatch batching switchback experiment",
+        "hypothesis": "Switching a batching algorithm on and off by zone-window will raise deliveries per courier-hour, because grouping nearby orders onto one courier wastes less travel — without making deliveries late.",
+        "treatment": "Batching algorithm on in treated zone-windows",
+        "control": "Single-order dispatch",
+        "unit": "Region x time window (randomized per zone-window; zone-windows are the analysis units, not deliveries)",
+        "population": "40 delivery zones x 112 windows (28 days, 4 windows/day; seed 42)",
+        "baseline": "Pre-period deliveries per courier-hour per zone",
+        "duration": "28 days",
+        "primary": "Deliveries per courier-hour per zone-window",
+        "secondary": ["Late-delivery rate (guardrail)"],
+        "guardrails": "Late-delivery rate must not rise significantly by more than 10%; SRM must pass.",
+        "method": "Unit means with cluster-robust SEs by zone; first window after each switch excluded as washout; SRM checked on all windows",
+        "followups": ["Why is this statistically significant?", "Explain the washout and carryover",
+                      "Exclude the five largest zones", "What are the five largest zones?",
+                      "Show results for large zones", "Show results for small zones"],
+    },
     "cross_publisher_budget": {
         "id": "cross_publisher_budget", "industry": "pharma",
         "title": "Cross-publisher marketing budget allocation",
@@ -265,16 +322,18 @@ FLAGSHIP_CONFIGS.update({
     },
 })
 
-# Phase 2: all 12 industry scenarios are now runnable. The industry card
-# list holds scenario ids; chat.py renders a card runnable exactly when
-# its id is in FLAGSHIP_CONFIGS, so no card can claim to run without an
-# engine behind it.
+# Phase 2 + switchback: all 16 industry scenarios are now runnable.
+# The industry card list holds scenario ids; chat.py renders a card
+# runnable exactly when its id is in FLAGSHIP_CONFIGS, so no card can
+# claim to run without an engine behind it.
 INDUSTRY_SCENARIOS = {
     "social": ["reddit_feed_ranking", "meta_creator_recommendations",
                "tiktok_notifications", "linkedin_connections",
                "linkedin_creator_crowding_out"],
     "marketplace": ["doordash_zip_promotion", "marketplace_dma_ads",
-                    "uber_driver_incentives", "delivery_fee_optimization"],
+                    "uber_driver_incentives", "delivery_fee_optimization",
+                    "switchback_sos_pricing", "switchback_surge",
+                    "switchback_batching"],
     "pharma": ["pharma_dma_publisher", "hcp_omnichannel",
                "field_visits_sampling", "cross_publisher_budget"],
 }

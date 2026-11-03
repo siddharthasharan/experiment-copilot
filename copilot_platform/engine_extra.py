@@ -25,6 +25,8 @@ import time
 import numpy as np
 import pandas as pd
 
+from scipy import stats as _st
+
 from .engine import cuped_lift, decide, srm_check, welch_lift
 
 
@@ -808,6 +810,345 @@ def analyze_crowding_out(df, progress=None):
                               "segment_labels": {"new": "new users", "established": "established users"}}}
 
 
+# ------------------------------------------------- Switchback experiments
+# Switchback design (DoorDash approach, stated because it decides what
+# the analysis may claim):
+# - Randomization unit = region x time window. Each region-window is
+#   assigned independently (coin flip per region-window), so a region
+#   switches between arms over the run. This is the design for cases
+#   where user-level randomization is invalid because units share a
+#   fleet, a market, or a feed: the shared resource is inside the
+#   region-window, not across arms.
+# - Analysis unit = the same region-window. The primary estimate is
+#   the simple (unweighted) average of unit values by arm — NOT a
+#   volume-weighted average of individual deliveries/trips. Weighting
+#   by volume would let a few huge windows dominate and would answer
+#   a different question (the average delivery's experience, not the
+#   average region-window's). The stored frame keeps one row per
+#   region-window so that choice is checkable, not asserted.
+# - Standard errors are cluster-robust by region (sandwich/CR0 on the
+#   OLS fit y ~ treat, t with regions-1 degrees of freedom). Windows
+#   in the same region are correlated (same fleet, same demand regime),
+#   so treating windows as independent would overstate precision.
+# - Carryover / washout: the first window after a switch is excluded
+#   from the primary analysis, because the system has not settled into
+#   the new arm yet (couriers in transit, prices mid-adjustment). That
+#   costs roughly half the windows under independent per-window
+#   randomization — the price of carryover protection — and it is
+#   reported, not hidden. A sensitivity including washout windows is
+#   computed alongside the primary, so a reader can see whether the
+#   washout choice drives the conclusion. The washout rule assumes
+#   carryover lasts at most one window; if it lasts longer, the
+#   primary is still contaminated, and the sensitivity does not fix
+#   that — it only shows the washout's own effect.
+# - SRM is checked on the assignment split of ALL randomized windows
+#   (washout windows included): washout is an analysis exclusion, not
+#   an assignment failure, so excluding it from the SRM check would
+#   hide a randomization problem.
+def cluster_robust_lift(values, treat, clusters):
+    """Difference in unit means with cluster-robust (CR0) SEs.
+
+    Returns the same headline keys as welch_lift (control_mean,
+    treatment_mean, lift_pct, ci_low_pct, ci_high_pct, p_value,
+    significant, n_control, n_treatment) plus se and n_clusters, so
+    scorecard and follow-up code can use it interchangeably.
+    """
+    import numpy as np
+
+    y = np.asarray(values, dtype=float)
+    t = np.asarray(treat, dtype=float)
+    c = np.asarray(clusters)
+    n = len(y)
+    n_t, n_c = int(t.sum()), int(n - t.sum())
+    cm = float(y[t == 0].mean()) if n_c else 0.0
+    tm = float(y[t == 1].mean()) if n_t else 0.0
+    if n_t < 2 or n_c < 2:
+        return {"control_mean": cm, "treatment_mean": tm, "lift_pct": 0.0,
+                "ci_low_pct": 0.0, "ci_high_pct": 0.0, "p_value": 1.0,
+                "significant": False, "n_control": n_c, "n_treatment": n_t,
+                "se": 0.0, "n_clusters": int(len(np.unique(c)))}
+    x = np.column_stack([np.ones(n), t])
+    beta, *_ = np.linalg.lstsq(x, y, rcond=None)
+    resid = y - x @ beta
+    xtx_inv = np.linalg.inv(x.T @ x)
+    meat = np.zeros((2, 2))
+    for g in np.unique(c):
+        m = c == g
+        s = x[m].T @ resid[m]
+        meat += np.outer(s, s)
+    var = xtx_inv @ meat @ xtx_inv
+    se = float(np.sqrt(max(var[1, 1], 0.0)))
+    dfree = max(int(len(np.unique(c))) - 1, 1)
+    diff = tm - cm
+    crit = float(_st.t.ppf(0.975, dfree))
+    p = float(2 * _st.t.sf(abs(diff / se), dfree)) if se > 0 else 1.0
+    return {"control_mean": cm, "treatment_mean": tm,
+            "lift_pct": float(diff / cm * 100) if cm != 0 else 0.0,
+            "ci_low_pct": float((diff - crit * se) / cm * 100) if cm != 0 else 0.0,
+            "ci_high_pct": float((diff + crit * se) / cm * 100) if cm != 0 else 0.0,
+            "p_value": p, "significant": bool(p < 0.05),
+            "n_control": n_c, "n_treatment": n_t, "se": se,
+            "n_clusters": int(len(np.unique(c)))}
+
+
+def _switchback_frame(rng, n_regions, region_col, base_volume, region_effect_sd,
+                      base_value, effect, noise_sd, duration_days, windows_per_day=4):
+    """Shared region x window frame. One row per region-window.
+
+    base_volume: requests/deliveries scale per region (lognormal draws
+    are made by the caller and passed in, so each scenario's scale is
+    explicit). base_value: per-region baseline of the primary metric
+    (a rate or a mean, never a raw count, so unit means are comparable
+    across regions of very different size). effect: additive treatment
+    effect on the primary metric. Weekend windows shift by -0.02 in
+    relative terms (demand regime, not treatment).
+    """
+    n_windows = duration_days * windows_per_day
+    regions = np.arange(1, n_regions + 1)
+    rows = []
+    for r in regions:
+        region_effect = rng.normal(0, region_effect_sd)
+        prev_assign = None
+        for w in range(n_windows):
+            day = w // windows_per_day + 1
+            weekend = 1.0 if day % 7 in (0, 6) else 0.0
+            treat = bool(rng.random() < 0.5)
+            washout = bool(prev_assign is not None and treat != prev_assign)
+            prev_assign = treat
+            value = base_value[r - 1] + region_effect - 0.02 * weekend
+            value += effect if treat else 0.0
+            value += rng.normal(0, noise_sd)
+            volume = base_volume[r - 1] * rng.lognormal(0, 0.15)
+            rows.append({"region_id": int(r), region_col: int(r), "window": int(w + 1),
+                         "day": int(day), "group": "treatment" if treat else "control",
+                         "treat": treat, "washout": washout,
+                         "baseline_volume": float(base_volume[r - 1]),
+                         "volume": float(volume), "value": float(value)})
+    df = pd.DataFrame(rows)
+    # Segment is a region attribute (large/small by median baseline
+    # volume), computed per region, not per window.
+    med = df.drop_duplicates("region_id")["baseline_volume"].median()
+    df["segment"] = np.where(df["baseline_volume"] >= med, "large", "small")
+    return df
+
+
+def _switchback_trend(df, value_col="value"):
+    """Daily trend from primary-analysis units only (washout excluded),
+    so the chart and the headline describe the same analysis."""
+    prim = df[~df["washout"]]
+    rows = []
+    for d in sorted(prim["day"].unique()):
+        sub = prim[prim["day"] == d]
+        c = sub.loc[sub["group"] == "control", value_col]
+        t = sub.loc[sub["group"] == "treatment", value_col]
+        rows.append({"day": int(d),
+                     "control": float(c.mean()) if len(c) else float(prim.loc[prim["group"] == "control", value_col].mean()),
+                     "treatment": float(t.mean()) if len(t) else float(prim.loc[prim["group"] == "treatment", value_col].mean())})
+    return pd.DataFrame(rows)
+
+
+def _switchback_analyze(df, progress, value_col, guard_col, guard_desc,
+                        unit_label, region_label):
+    """Shared switchback analysis: cluster-robust primary, washout
+    sensitivity, SRM on all windows, segments by region size."""
+    t0 = time.time()
+    treat_all = df["group"] == "treatment"
+    if progress:
+        progress("Generating synthetic data", f"{df['region_id'].nunique()} regions x {df['window'].max()} windows, seed recorded in config")
+        progress("Validating entity relationships", "one row per region-window; washout flag recorded per window")
+        progress("Assigning treatment and control", f"control {int((~treat_all).sum())} / treatment {int(treat_all.sum())} region-windows (SRM on all windows, washout included)")
+    srm = srm_check(int((~treat_all).sum()), int(treat_all.sum()))
+    if progress:
+        progress("Checking baseline balance", f"SRM p={srm['p_value']:.3f} ({'FAIL' if srm['failed'] else 'pass'})")
+    prim = df[~df["washout"]]
+    tr = prim["group"] == "treatment"
+    primary = cluster_robust_lift(prim[value_col].values, tr.values, prim["region_id"].values)
+    sens = cluster_robust_lift(df[value_col].values, treat_all.values, df["region_id"].values)
+    if progress:
+        progress("Computing experiment metrics", f"primary lift {primary['lift_pct']:+.2f}% (unit means, cluster-robust SEs by region, washout excluded)")
+    guard = welch_lift(prim.loc[~tr, guard_col], prim.loc[tr, guard_col])
+    guard_failed = bool(guard["significant"] and guard_desc(guard))
+    verdict = decide(primary, guard_failed, srm["failed"])
+    if progress:
+        progress("Evaluating guardrails and statistical validity", f"guardrail lift {guard['lift_pct']:+.1f}%")
+        progress("Generating the scorecard", f"verdict {verdict} in {time.time() - t0:.2f}s")
+    segments = []
+    for seg, sub in prim.groupby("segment"):
+        s_tr = sub["group"] == "treatment"
+        segments.append({"segment": f"{seg} {region_label}",
+                         **cluster_robust_lift(sub[value_col].values, s_tr.values, sub["region_id"].values)})
+    return {"primary": primary, "guardrail": guard, "srm": srm, "verdict": verdict,
+            "segments": segments, "guardrail_failed": guard_failed,
+            "n_units": int(len(prim)), "unit": unit_label,
+            "n_regions": int(df["region_id"].nunique()),
+            "switchback": {"region_col": "region_id", "value_col": value_col,
+                           "guard_col": guard_col, "region_label": region_label,
+                           "washout_windows": int(df["washout"].sum()),
+                           "total_windows": int(len(df)),
+                           "sensitivity": sens,
+                           "washout_text": (f"Washout: {int(df['washout'].sum())} of {int(len(df))} region-windows "
+                                            f"({int(df['washout'].sum()) / len(df) * 100:.0f}%) were excluded from the primary "
+                                            f"analysis because they were the first window after a switch. "
+                                            f"Including them, the lift is {sens['lift_pct']:+.2f}% "
+                                            f"(95% CI [{sens['ci_low_pct']:+.2f}%, {sens['ci_high_pct']:+.2f}%], "
+                                            f"p={sens['p_value']:.3g}) versus {primary['lift_pct']:+.2f}% primary. "
+                                            f"If the two agree, the washout choice does not drive the conclusion.")}}
+
+
+# ------------------------------------------- Switchback: SOS / dispatch pricing
+def generate_switchback_sos(seed=42, duration_days=28):
+    """DoorDash-style SOS (supply-or-surge) pricing switchback.
+
+    Zones switch between SOS pricing on and off, window by window.
+    Primary: on-time delivery rate per zone-window (higher is better —
+    SOS throttles demand and motivates supply, so on-time performance
+    should rise). Guardrail: orders per zone-window must not fall
+    significantly by more than 10% (the fee throttles demand by design,
+    but a large order loss would veto the pricing change). Ground truth
+    at seed 42 is a genuine improvement: on-time rate rises while
+    orders dip only slightly, so the verdict is LAUNCH on the stated
+    rules. Rates, not counts, are the unit values, so a huge zone does
+    not dominate the average.
+    """
+    rng = np.random.default_rng(seed)
+    n = 40
+    base_volume = rng.lognormal(mean=4.0, sigma=0.5, size=n)
+    base_rate = np.clip(0.86 + rng.normal(0, 0.02, size=n), 0.78, 0.92)
+    df = _switchback_frame(rng, n, "zone", base_volume, 0.03, base_rate, 0.045, 0.04, duration_days)
+    df = df.rename(columns={"value": "on_time_rate"})
+    # Orders per window: requests times a completion factor; SOS throttles
+    # demand slightly (-3%) by design.
+    df["orders"] = df["volume"] * np.where(df["group"] == "treatment", 0.89, 0.92) * rng.lognormal(0, 0.05, size=len(df))
+    df["on_time_deliveries"] = df["volume"] * df["on_time_rate"]
+    return df, _switchback_trend(df, "on_time_rate")
+
+
+def analyze_switchback_sos(df, progress=None):
+    out = _switchback_analyze(df, progress, "on_time_rate", "orders",
+                              lambda g: g["lift_pct"] < -10, "Region-windows", "zones")
+    prim = df[~df["washout"]]
+    tr = prim["group"] == "treatment"
+    ctrl_rate = float(prim.loc[~tr, "on_time_rate"].mean())
+    inc = float((prim.loc[tr, "on_time_deliveries"].sum() - ctrl_rate * prim.loc[tr, "volume"].sum()))
+    out["metrics"] = [
+        {"name": "On-time delivery rate / zone-window", "control": out["primary"]["control_mean"],
+         "treatment": out["primary"]["treatment_mean"], "lift_pct": out["primary"]["lift_pct"],
+         "ci_low_pct": out["primary"]["ci_low_pct"], "ci_high_pct": out["primary"]["ci_high_pct"],
+         "p_value": out["primary"]["p_value"], "method": "Unit means, cluster-robust SEs by zone", "guardrail": False},
+        {"name": "Orders / zone-window", "control": out["guardrail"]["control_mean"],
+         "treatment": out["guardrail"]["treatment_mean"], "lift_pct": out["guardrail"]["lift_pct"],
+         "ci_low_pct": out["guardrail"]["ci_low_pct"], "ci_high_pct": out["guardrail"]["ci_high_pct"],
+         "p_value": out["guardrail"]["p_value"], "method": "Welch (zone-window level)", "guardrail": True}]
+    out["business"] = {"incremental_on_time_deliveries": inc,
+                       "impact_text": (f"On-time rate rose {out['primary']['treatment_mean'] * 100:.1f}% vs "
+                                       f"{out['primary']['control_mean'] * 100:.1f}% in control "
+                                       f"({out['primary']['lift_pct']:+.2f}%), worth about {inc:,.0f} extra on-time "
+                                       f"deliveries across treated windows at the control rate. Orders per window moved "
+                                       f"{out['guardrail']['lift_pct']:+.1f}% — a small demand throttle, not a veto-sized loss. "
+                                       f"Those figures come from the generated data, not from the headline lift alone.")}
+    return out
+
+
+# ------------------------------------------- Switchback: surge multiplier
+def generate_switchback_surge(seed=42, duration_days=28):
+    """Uber-style surge multiplier switchback across cities.
+
+    Cities switch surge pricing on and off, window by window. Primary:
+    trip completion rate per city-window (surge should bring drivers
+    out and complete more requested trips). Guardrail: rider
+    cancellations per city-window must not rise significantly by more
+    than 20%. Economics (the point of this scenario): surge is paid on
+    EVERY treated trip, not just the incremental ones, so even a real
+    completion lift can lose money — computed explicitly, and it vetoes
+    a positive lift here, as in the DoorDash promotion design.
+    """
+    rng = np.random.default_rng(seed)
+    n = 30
+    base_volume = rng.lognormal(mean=4.5, sigma=0.6, size=n)
+    base_rate = np.clip(0.78 + rng.normal(0, 0.03, size=n), 0.68, 0.86)
+    df = _switchback_frame(rng, n, "city", base_volume, 0.04, base_rate, 0.055, 0.05, duration_days)
+    df = df.rename(columns={"value": "completion_rate"})
+    df["completed_trips"] = df["volume"] * df["completion_rate"]
+    df["cancel_rate"] = np.clip(np.where(df["group"] == "treatment", 0.065, 0.060) + rng.normal(0, 0.008, size=len(df)), 0, 1)
+    return df, _switchback_trend(df, "completion_rate")
+
+
+def analyze_switchback_surge(df, progress=None):
+    out = _switchback_analyze(df, progress, "completion_rate", "cancel_rate",
+                              lambda g: g["lift_pct"] > 20, "Region-windows", "cities")
+    prim = df[~df["washout"]]
+    tr = prim["group"] == "treatment"
+    ctrl_rate = float(prim.loc[~tr, "completion_rate"].mean())
+    treated_completed = float(prim.loc[tr, "completed_trips"].sum())
+    inc = float(prim.loc[tr, "completed_trips"].sum() - ctrl_rate * prim.loc[tr, "volume"].sum())
+    bonus_per_trip, value_per_trip = 3.50, 10.0
+    cost = treated_completed * bonus_per_trip
+    cost_per = (cost / inc) if inc > 0 else float("inf")
+    business_reason = None
+    if out["primary"]["significant"] and out["primary"]["lift_pct"] > 0 and cost_per > value_per_trip:
+        out["verdict"] = "DONT_LAUNCH"
+        business_reason = (f"Surge lifts completion by {out['primary']['lift_pct']:+.2f}%, but the bonus is paid on "
+                           f"every treated trip (${bonus_per_trip:.2f} x {treated_completed:,.0f} treated trips = "
+                           f"${cost:,.0f}), so the cost per incremental trip is ${cost_per:,.2f} against a "
+                           f"${value_per_trip:.2f} value per trip. The completion gain does not pay for itself at this bonus level.")
+    out["business_reason"] = business_reason
+    out["metrics"] = [
+        {"name": "Trip completion rate / city-window", "control": out["primary"]["control_mean"],
+         "treatment": out["primary"]["treatment_mean"], "lift_pct": out["primary"]["lift_pct"],
+         "ci_low_pct": out["primary"]["ci_low_pct"], "ci_high_pct": out["primary"]["ci_high_pct"],
+         "p_value": out["primary"]["p_value"], "method": "Unit means, cluster-robust SEs by city", "guardrail": False},
+        {"name": "Rider cancellation rate", "control": out["guardrail"]["control_mean"],
+         "treatment": out["guardrail"]["treatment_mean"], "lift_pct": out["guardrail"]["lift_pct"],
+         "ci_low_pct": out["guardrail"]["ci_low_pct"], "ci_high_pct": out["guardrail"]["ci_high_pct"],
+         "p_value": out["guardrail"]["p_value"], "method": "Welch (city-window level)", "guardrail": True}]
+    out["business"] = {"incremental_trips": inc, "surge_spend_usd": cost,
+                       "cost_per_incremental_trip_usd": float(cost_per),
+                       "impact_text": (f"Incremental completed trips: {inc:,.0f}. Surge spend: ${cost:,.0f} "
+                                       f"(${bonus_per_trip:.2f} per treated trip). Cost per incremental trip: "
+                                       f"${cost_per:,.2f} against a ${value_per_trip:.2f} value per trip. "
+                                       f"Those figures come from the generated data, not from the headline lift alone.")}
+    return out
+
+
+# ------------------------------------------- Switchback: dispatch batching
+def generate_switchback_batching(seed=42, duration_days=28):
+    """Dispatch batching algorithm switchback across delivery zones.
+
+    Zones switch between a batching algorithm (group nearby orders onto
+    one courier) and single-order dispatch, window by window. Primary:
+    deliveries per courier-hour per zone-window (efficiency, higher is
+    better). Guardrail: late-delivery rate must not rise significantly
+    by more than 10% (batching can delay the first drop). Ground truth
+    at seed 42 is deliberately small (+~1% efficiency) with window
+    noise large enough that the effect is not significant — an honest
+    INCONCLUSIVE, not a tuned win: batching helps a little, but this
+    run cannot establish it.
+    """
+    rng = np.random.default_rng(seed)
+    n = 40
+    base_volume = rng.lognormal(mean=4.0, sigma=0.5, size=n)
+    base_eff = np.clip(3.0 + rng.normal(0, 0.15, size=n), 2.4, 3.6)
+    df = _switchback_frame(rng, n, "zone", base_volume, 0.30, base_eff, 0.03, 0.80, duration_days)
+    df = df.rename(columns={"value": "deliveries_per_hour"})
+    df["late_rate"] = np.clip(np.where(df["group"] == "treatment", 0.125, 0.120) + rng.normal(0, 0.02, size=len(df)), 0, 1)
+    return df, _switchback_trend(df, "deliveries_per_hour")
+
+
+def analyze_switchback_batching(df, progress=None):
+    out = _switchback_analyze(df, progress, "deliveries_per_hour", "late_rate",
+                              lambda g: g["lift_pct"] > 10, "Region-windows", "zones")
+    out["metrics"] = [
+        {"name": "Deliveries / courier-hour / zone-window", "control": out["primary"]["control_mean"],
+         "treatment": out["primary"]["treatment_mean"], "lift_pct": out["primary"]["lift_pct"],
+         "ci_low_pct": out["primary"]["ci_low_pct"], "ci_high_pct": out["primary"]["ci_high_pct"],
+         "p_value": out["primary"]["p_value"], "method": "Unit means, cluster-robust SEs by zone", "guardrail": False},
+        {"name": "Late-delivery rate", "control": out["guardrail"]["control_mean"],
+         "treatment": out["guardrail"]["treatment_mean"], "lift_pct": out["guardrail"]["lift_pct"],
+         "ci_low_pct": out["guardrail"]["ci_low_pct"], "ci_high_pct": out["guardrail"]["ci_high_pct"],
+         "p_value": out["guardrail"]["p_value"], "method": "Welch (zone-window level)", "guardrail": True}]
+    return out
+
+
 EXTRA_FLAGSHIPS = {
     "linkedin_creator_crowding_out": (generate_crowding_out, analyze_crowding_out),
     "meta_creator_recommendations": (generate_meta, analyze_meta),
@@ -819,4 +1160,7 @@ EXTRA_FLAGSHIPS = {
     "hcp_omnichannel": (generate_hcp, analyze_hcp),
     "field_visits_sampling": (generate_field, analyze_field),
     "cross_publisher_budget": (generate_cross_publisher, analyze_cross_publisher),
+    "switchback_sos_pricing": (generate_switchback_sos, analyze_switchback_sos),
+    "switchback_surge": (generate_switchback_surge, analyze_switchback_surge),
+    "switchback_batching": (generate_switchback_batching, analyze_switchback_batching),
 }

@@ -142,7 +142,7 @@ class Orchestrator:
             # Non-runnable scenario card clicked (no longer reachable from
             # the industry cards in Phase 2, kept as a guard).
             return [_text("That scenario isn't runnable — I won't fake a run for it. "
-                          "The runnable options are the 12 industry scenarios, plus the 14 example scenarios. "
+                          "The runnable options are the 16 industry scenarios, plus the 14 example scenarios. "
                           "Pick one of those, or tell me what you wanted to test and I'll point you to the closest match.")]
 
         if action == "example":
@@ -184,7 +184,13 @@ class Orchestrator:
             # The unit sentence is scenario-specific: a generic geo sentence
             # in a user-level explanation is confusing (and wrong in context),
             # even though the underlying principle is the same.
-            if "ZIP" in cfg["unit"] or "DMA" in cfg["unit"]:
+            if "time window" in cfg["unit"]:
+                unit_note = ("The analysis unit is the randomization unit — here that is the "
+                             "region x time window, never the deliveries or trips inside a window "
+                             "counted as independent units. The primary estimate averages unit means, "
+                             "with cluster-robust standard errors by region, and the first window "
+                             "after each switch is excluded as a washout against carryover.")
+            elif "ZIP" in cfg["unit"] or "DMA" in cfg["unit"]:
                 unit_note = ("The analysis unit is the randomization unit — here that is the "
                              "ZIP/DMA, never the impressions or users inside a geo counted as "
                              "independent units.")
@@ -249,6 +255,17 @@ class Orchestrator:
         # platform here. Check it before the platform names.
         if "crowd" in low or "follower" in low or "top creator" in low:
             return self.handle(session, action="scenario", payload={"scenario_id": "linkedin_creator_crowding_out"})
+        # Switchback keywords beat platform names: "DoorDash switchback"
+        # is the SOS switchback, not the ZIP promotion, and "surge" is
+        # the surge switchback, not the Uber incentives experiment.
+        if "switchback" in low or "sos" in low or "surge" in low or "batching" in low:
+            if "surge" in low:
+                sid = "switchback_surge"
+            elif "batch" in low:
+                sid = "switchback_batching"
+            else:
+                sid = "switchback_sos_pricing"
+            return self.handle(session, action="scenario", payload={"scenario_id": sid})
         # Platform names win over topic words. The old order checked
         # "creator" before "linkedin", so "In LinkedIn, do top creators
         # crowd out small creators?" routed to Meta — the topic word
@@ -298,9 +315,10 @@ class Orchestrator:
             if e["title"].lower() in low or e["id"].replace("_", " ") in low:
                 return self.handle(session, action="example", payload={"scenario_id": e["id"]})
         return [_text("I can't map that to a runnable experiment yet, and I won't guess a design for it. "
-                      "The runnable options right now are the 12 industry scenarios — Reddit, Meta, TikTok, "
+                      "The runnable options right now are the 16 industry scenarios — Reddit, Meta, TikTok, "
                       "LinkedIn, DoorDash, DMA advertising, Uber, delivery-fee, Pharma DMA, HCP omnichannel, "
-                      "field visits, cross-publisher — plus the 14 example "
+                      "field visits, cross-publisher, plus three switchback designs (SOS pricing, surge, "
+                      "dispatch batching) — plus the 14 example "
                       "scenarios. Which of those is closest to what you had in mind?")]
 
     # ------------------------------------------------------------ follow-ups
@@ -319,6 +337,9 @@ class Orchestrator:
                     _chips(["New experiment"])]
         sid = session["scenario_id"]
         df, result, cfg = session["df"], session["result"], session["config"]
+        if "washout" in low or "carryover" in low:
+            out = followups.switchback_washout(df, result, sid)
+            return [_text(out["text"]), _chips(cfg["followups"])]
         m = re.search(r"exclude (?:the )?(\d+|five|ten) largest", low)
         if m or "exclude" in low and "largest" in low:
             n = 5

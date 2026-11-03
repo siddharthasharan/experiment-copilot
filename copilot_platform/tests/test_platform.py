@@ -70,7 +70,7 @@ def main():
     _new = ["meta_creator_recommendations", "tiktok_notifications", "linkedin_connections",
             "marketplace_dma_ads", "uber_driver_incentives", "delivery_fee_optimization",
             "hcp_omnichannel", "field_visits_sampling", "cross_publisher_budget"]
-    check("all 13 industry scenarios registered", len(_CFG) == 13 and
+    check("all 16 industry scenarios registered", len(_CFG) == 16 and
           all(s in _CFG for ind in _IND.values() for s in ind))
     for _sid in _new:
         _a, _ra = run_flagship(_sid, seed=42)
@@ -166,6 +166,79 @@ def main():
     check("chat largest question answered", "largest DMAs" in _fb2[0]["text"] and "I can't answer" not in _fb2[0]["text"])
     _fb3 = orch.handle(_s6, message="Exclude the five largest DMAs")
     check("chat exclude-largest still works after largest branch", "Excluding the 5 largest units" in _fb3[0]["text"])
+    # Switchback scenarios (2026-11-03): region x window randomization,
+    # unit-mean analysis with cluster-robust SEs by region, washout
+    # exclusion, and scorecard-followup agreement.
+    _sb_ids = ["switchback_sos_pricing", "switchback_surge", "switchback_batching"]
+    _sb_verdicts = {"switchback_sos_pricing": "LAUNCH", "switchback_surge": "DONT_LAUNCH",
+                    "switchback_batching": "INCONCLUSIVE"}
+    for _sid in _sb_ids:
+        _a, _ra = run_flagship(_sid, seed=42)
+        _b, _rb = run_flagship(_sid, seed=42)
+        check(f"{_sid} seed reproducible", _a.equals(_b) and _ra["primary"]["lift_pct"] == _rb["primary"]["lift_pct"])
+        _c, _ = run_flagship(_sid, seed=7)
+        check(f"{_sid} seed changes data", not _a.equals(_c))
+        check(f"{_sid} verdict at seed 42", _ra["verdict"] == _sb_verdicts[_sid])
+        check(f"{_sid} srm passes at seed 42", _ra["srm"]["failed"] is False)
+        _sb = _ra["switchback"]
+        check(f"{_sid} washout excludes first window after a switch",
+              _sb["washout_windows"] > 0 and _sb["washout_windows"] < _sb["total_windows"] and
+              _ra["n_units"] == _sb["total_windows"] - _sb["washout_windows"])
+        _prim = _a[~_a["washout"]]
+        _tr = _prim["group"] == "treatment"
+        _unit_diff = _prim.loc[_tr, _sb["value_col"]].mean() - _prim.loc[~_tr, _sb["value_col"]].mean()
+        _ctrl_mean = _prim.loc[~_tr, _sb["value_col"]].mean()
+        check(f"{_sid} primary is unweighted unit-mean difference",
+              abs(_ra["primary"]["lift_pct"] - _unit_diff / _ctrl_mean * 100) < 1e-9)
+        _weighted = ((_prim.loc[_tr, _sb["value_col"]] * _prim.loc[_tr, "volume"]).sum() / _prim.loc[_tr, "volume"].sum()
+                     - (_prim.loc[~_tr, _sb["value_col"]] * _prim.loc[~_tr, "volume"]).sum() / _prim.loc[~_tr, "volume"].sum())
+        check(f"{_sid} primary is not volume-weighted",
+              abs(_weighted / _ctrl_mean * 100 - _ra["primary"]["lift_pct"]) > 1e-6)
+        check(f"{_sid} cluster-robust SE present",
+              _ra["primary"].get("n_clusters", 0) == _ra["n_regions"] and _ra["primary"].get("se", 0) > 0)
+        check(f"{_sid} washout sensitivity computed",
+              "lift_pct" in _sb["sensitivity"] and _sb["sensitivity"]["lift_pct"] != _ra["primary"]["lift_pct"])
+        _cfg = dict(_CFG[_sid]); _cfg["seed"] = 42
+        _trend = _ra.pop("trend")
+        _sc = build_scorecard(_cfg, _ra, _trend, 42)
+        check(f"{_sid} scorecard lift matches engine", abs(_sc["primary_lift_pct"] - _ra["primary"]["lift_pct"]) < 1e-9)
+        check(f"{_sid} scorecard verdict matches engine", _sc["verdict"] == _ra["verdict"])
+        check(f"{_sid} scorecard segment matches engine",
+              all(abs(s["lift_pct"] - next(x for x in _ra["segments"] if x["segment"] == s["segment"])["lift_pct"]) < 1e-9
+                  for s in _sc["segments"]))
+        check(f"{_sid} scorecard states washout",
+              any("washout" in w.lower() for w in _sc["watchouts"]) and "washout" in _sc["ds"]["sensitivity"].lower())
+        _seg = followups.segment(_a, _ra, _sid, "large")
+        check(f"{_sid} segment recomputes and matches scorecard",
+              _seg["supported"] and abs(_seg["lift_pct"] - next(x for x in _ra["segments"] if "large" in x["segment"])["lift_pct"]) < 1e-9)
+        _wo = followups.switchback_washout(_a, _ra, _sid)
+        check(f"{_sid} washout follow-up explains carryover",
+              _wo["supported"] and "Washout" in _wo["text"] and "carryover" in _wo["text"].lower())
+        _lg = followups.largest_units(_a, _ra, _sid, 5)
+        check(f"{_sid} largest regions listed", _lg["supported"] and len(_lg["units"]) == 5)
+        _ex = followups.exclude_top(_a, _ra, _sid, 5)
+        check(f"{_sid} exclude-top recomputes with cluster-robust estimator",
+              _ex["supported"] and _ex["n_remaining"] < _ra["n_units"])
+        _wo2 = followups.switchback_washout(_df_r2, _r_r2, "reddit_feed_ranking")
+        check("washout honestly unsupported for user-level", _wo2["supported"] is False)
+    _s7 = new_session()
+    orch.handle(_s7, action="industry", payload={"industry_id": "marketplace"})
+    _blocks_m = orch.handle(_s7, action="industry", payload={"industry_id": "marketplace"})
+    _cards_m = [b for b in _blocks_m if b["type"] == "scenario_cards"][0]["cards"]
+    check("marketplace cards include 3 switchback scenarios", len(_cards_m) == 7 and all(c["runnable"] for c in _cards_m))
+    orch.handle(_s7, message="DoorDash switchback pricing test")
+    check("switchback keyword routes to SOS switchback", _s7.get("scenario_id") == "switchback_sos_pricing")
+    orch.handle(_s7, message="New experiment")
+    orch.handle(_s7, action="industry", payload={"industry_id": "marketplace"})
+    orch.handle(_s7, action="scenario", payload={"scenario_id": "switchback_surge"})
+    _df_sb, _r_sb = run_flagship("switchback_surge", seed=42)
+    _trend_sb = _r_sb.pop("trend")
+    _s7.update({"state": "done", "df": _df_sb, "result": _r_sb,
+                "config": dict(_CFG["switchback_surge"])})
+    _fb_sb = orch.handle(_s7, message="Explain the washout and carryover")
+    check("chat washout follow-up works", "Washout" in _fb_sb[0]["text"])
+    _fb_sb2 = orch.handle(_s7, message="What are the five largest cities?")
+    check("chat largest cities works for switchback", "largest cities" in _fb_sb2[0]["text"])
     _s2 = new_session()
     _blocks = orch.handle(_s2, action="industry", payload={"industry_id": "social"})
     _cards = [b for b in _blocks if b["type"] == "scenario_cards"][0]["cards"]

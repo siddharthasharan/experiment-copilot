@@ -50,6 +50,13 @@ def build_scorecard(config, result, trend, seed):
         kpis.append({"label": "Incremental prescriptions", "value": f"{business['incremental_rx']:,.0f}"})
     if "cost_per_incremental_rx_usd" in business:
         kpis.append({"label": "Cost / incremental prescription", "value": f"${business['cost_per_incremental_rx_usd']:,.2f}"})
+    # Switchback KPIs: regions and washout counts are part of the design,
+    # not footnotes — a reader should see how much data the washout cost.
+    _sb = result.get("switchback") or {}
+    if _sb:
+        kpis.append({"label": "Regions", "value": f"{result.get('n_regions', 0):,}"})
+        kpis.append({"label": "Washout windows excluded",
+                     "value": f"{_sb.get('washout_windows', 0):,} of {_sb.get('total_windows', 0):,}"})
     # Cumulative incremental impact (from trend: treatment-control per period, cumulated).
     cum = []
     total = 0.0
@@ -153,7 +160,31 @@ def build_scorecard(config, result, trend, seed):
         "assumptions": "Random assignment, no differential attrition, and (for pre-period adjustment) that the pre-period covariate is not affected by treatment.",
         "sensitivity": sensitivity,
     }
+    # Switchback DS view: the generic SE/clustering/sensitivity lines
+    # assume Welch or geo-level analysis, which is wrong for a
+    # region-window design — override them with the actual estimator,
+    # and state the washout sensitivity inline.
+    _sb = result.get("switchback") or {}
+    if _sb:
+        _sens = _sb.get("sensitivity") or {}
+        ds["se"] = (f"Cluster-robust SEs by region (sandwich, {primary.get('n_clusters', 0)} regions, "
+                    f"t with regions-1 df); primary n: control {primary['n_control']:,}, treatment "
+                    f"{primary['n_treatment']:,} region-windows (washout excluded).")
+        ds["clustering"] = ("Switchback: windows in the same region are correlated (same fleet, same "
+                            "demand regime), so SEs are cluster-robust by region. Treating windows as "
+                            "independent would overstate precision.")
+        ds["sensitivity"] = (f"Sensitivity — re-analysis of this same run, NOT a new experiment: "
+                             f"washout excluded {_sb.get('washout_windows', 0):,} of {_sb.get('total_windows', 0):,} "
+                             f"windows (first window after each switch); including them, the lift is "
+                             f"{_sens.get('lift_pct', 0):+.2f}% (95% CI [{_sens.get('ci_low_pct', 0):+.2f}%, "
+                             f"{_sens.get('ci_high_pct', 0):+.2f}%], p={_sens.get('p_value', 1):.3g}) versus "
+                             f"{primary['lift_pct']:+.2f}% primary. Ask in chat to 'exclude the largest "
+                             f"{_sb.get('region_label', 'regions')}' or to look at a single segment. "
+                             f"Carryover lasting longer than one window would still contaminate the primary.")
     watchouts = []
+    if _sb:
+        watchouts.append("Switchback unit: the analysis unit is the region-window, not the delivery or trip inside it. The headline averages unit means (unweighted), with cluster-robust SEs by region.")
+        watchouts.append("Carryover: washout excludes only the first window after a switch. If carryover lasts longer than one window, the primary can still be contaminated — the washout sensitivity only shows the washout's own effect.")
     if result["srm"]["failed"]:
         watchouts.append("Randomization failure (SRM): the assignment split does not match the design. Do not trust any lift from this run.")
     if result["guardrail_failed"]:

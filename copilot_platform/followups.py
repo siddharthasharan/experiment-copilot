@@ -27,8 +27,53 @@ def _fmt(x, digits=2):
     return f"{x:+.{digits}f}%"
 
 
+_SWITCHBACK_IDS = ("switchback_sos_pricing", "switchback_surge", "switchback_batching")
+
+
+def _switchback_primary(df, result):
+    """Cluster-robust primary on primary-analysis (non-washout) windows."""
+    from .engine_extra import cluster_robust_lift
+
+    sb = (result or {}).get("switchback") or {}
+    prim = df[~df["washout"]]
+    tr = prim["group"] == "treatment"
+    return cluster_robust_lift(prim[sb["value_col"]].values, tr.values, prim["region_id"].values)
+
+
+def switchback_washout(df, result, scenario_id):
+    """Carryover/washout explanation for switchback runs only."""
+    sb = (result or {}).get("switchback") or {}
+    if scenario_id not in _SWITCHBACK_IDS or not sb:
+        return {"supported": False,
+                "text": "Washout only applies to switchback experiments, where regions switch arms over time. "
+                        "This experiment does not switch arms, so there is no carryover window to exclude."}
+    return {"supported": True, "text": sb["washout_text"] + (
+        " The washout rule assumes carryover lasts at most one window: if the system takes longer "
+        "than one window to settle after a switch, the primary can still be contaminated, and the "
+        "sensitivity above only shows the washout's own effect, it does not fix longer carryover.")}
+
+
 def exclude_top(df, result, scenario_id, n=5):
     """Drop the n largest units by baseline volume, recompute primary."""
+    if scenario_id in _SWITCHBACK_IDS:
+        from .engine_extra import cluster_robust_lift
+
+        sb = (result or {}).get("switchback") or {}
+        regions = df.drop_duplicates("region_id").nlargest(n, "baseline_volume")["region_id"].tolist()
+        sub = df[(~df["washout"]) & (~df["region_id"].isin(regions))]
+        tr = sub["group"] == "treatment"
+        new = cluster_robust_lift(sub[sb["value_col"]].values, tr.values, sub["region_id"].values)
+        old = result["primary"]
+        return {"supported": True, "excluded": regions, "n_remaining": int(len(sub)),
+                "old_lift_pct": old["lift_pct"], "new_lift_pct": new["lift_pct"],
+                "new_ci_low_pct": new["ci_low_pct"], "new_ci_high_pct": new["ci_high_pct"],
+                "new_p_value": new["p_value"], "new_significant": new["significant"],
+                "text": f"Excluding the {n} largest {sb.get('region_label', 'regions')} ({', '.join(str(x) for x in regions)}) leaves {len(sub)} region-windows (washout windows already excluded). "
+                        f"The primary lift moves from {old['lift_pct']:+.2f}% to {new['lift_pct']:+.2f}% "
+                        f"(95% CI [{new['ci_low_pct']:+.2f}%, {new['ci_high_pct']:+.2f}%], p={new['p_value']:.3g}, "
+                        f"{'significant' if new['significant'] else 'not significant'}), recomputed with the same "
+                        f"cluster-robust-by-region estimator as the headline. "
+                        f"If the lift survives excluding the largest regions, it is not carried by them alone."}
     if scenario_id == "doordash_zip_promotion":
         base_col, post_col, pre_col, unit_col = "baseline_orders", "post_orders", "pre_orders", "zip"
     elif scenario_id == "pharma_dma_publisher":
@@ -96,6 +141,20 @@ def largest_units(df, result, scenario_id, n=5, smallest=False):
     naturally with the exclude-top check ("these are the units that
     check would drop").
     """
+    if scenario_id in _SWITCHBACK_IDS:
+        sb = (result or {}).get("switchback") or {}
+        regions = df.drop_duplicates("region_id")
+        ordered = regions.nsmallest(n, "baseline_volume") if smallest else regions.nlargest(n, "baseline_volume")
+        total = float(regions["baseline_volume"].sum())
+        share = float(ordered["baseline_volume"].sum() / total * 100) if total else 0.0
+        kind = "smallest" if smallest else "largest"
+        label = sb.get("region_label", "regions")
+        items = "; ".join(f"region {row['region_id']} ({row['baseline_volume']:,.1f})" for _, row in ordered.iterrows())
+        text = (f"The {n} {kind} {label} by baseline volume are: {items}. "
+                f"Together they account for {share:.1f}% of baseline volume.")
+        if not smallest:
+            text += f" To see whether the headline result survives without them, ask 'Exclude the {n} largest {label}'."
+        return {"supported": True, "units": ordered["region_id"].tolist(), "text": text}
     base_col, unit_col = _geo_cols(df, result, scenario_id)
     if base_col is None or unit_col not in df.columns or base_col not in df.columns:
         return {"supported": False,
@@ -120,6 +179,25 @@ def largest_units(df, result, scenario_id, n=5, smallest=False):
 def segment(df, result, scenario_id, segment_name):
     """Recompute the primary metric for one segment of the stored frame."""
     seg = segment_name.lower()
+    if scenario_id in _SWITCHBACK_IDS:
+        sb = (result or {}).get("switchback") or {}
+        if "large" in seg:
+            match, label = "large", f"large {sb.get('region_label', 'regions')}"
+        elif "small" in seg:
+            match, label = "small", f"small {sb.get('region_label', 'regions')}"
+        else:
+            return {"supported": False,
+                    "text": f"For this switchback, segments are 'large {sb.get('region_label', 'regions')}' and 'small {sb.get('region_label', 'regions')}'."}
+        sub = df[(~df["washout"]) & (df["segment"] == match)]
+        tr = sub["group"] == "treatment"
+        from .engine_extra import cluster_robust_lift
+
+        r = cluster_robust_lift(sub[sb["value_col"]].values, tr.values, sub["region_id"].values)
+        return {"supported": True, "segment": label, **r,
+                "text": f"For {label} (n={len(sub):,} region-windows, washout excluded), the primary metric moved "
+                        f"{r['lift_pct']:+.2f}% (95% CI [{r['ci_low_pct']:+.2f}%, {r['ci_high_pct']:+.2f}%], "
+                        f"p={r['p_value']:.3g}, {'significant' if r['significant'] else 'not significant'}), "
+                        f"with the same cluster-robust-by-region estimator as the headline."}
     if scenario_id == "reddit_feed_ranking":
         if "new" in seg and "establish" not in seg:
             sub = df[df["segment"] == "new"]; label = "new users"
