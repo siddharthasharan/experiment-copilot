@@ -29,6 +29,13 @@ class LLMAdapter:
         return None
 
 
+# Guided-run preset: the LinkedIn creator crowding-out scenario. It
+# shows judgment, not just a win — small-creator share down, total
+# sessions up, DONT_LAUNCH — so a first-time visitor sees what a
+# verdict that says no looks like.
+GUIDED_RUN_PRESET = "linkedin_creator_crowding_out"
+
+
 def new_session():
     return {"id": str(uuid.uuid4())[:8], "messages": [], "state": "welcome",
             "industry": None, "scenario_id": None, "config": None,
@@ -49,6 +56,13 @@ def welcome_blocks():
         _text("Hi! I'm Experiment Copilot. I can help you design, simulate, analyze, and interpret "
               "experiments across different industries.\n\nWhich industry would you like to explore?"),
         {"type": "industry_cards", "industries": INDUSTRIES},
+        # Guided run: a first-time visitor lands on a result, not an
+        # empty chat. One click auto-runs the preset below through the
+        # same 7 stages as a normal run and opens its scorecard.
+        {"type": "guided_run", "scenario_id": GUIDED_RUN_PRESET,
+         "title": "Try a sample run",
+         "description": "New here? Run one preset experiment end-to-end — the LinkedIn creator "
+                        "crowding-out scenario — and see a full scorecard. No setup, no choices to make first."},
         _chips(["Explore the 14 example scenarios"]),
     ]
 
@@ -108,6 +122,8 @@ class Orchestrator:
             session.update({"state": "welcome", "industry": None, "scenario_id": None,
                             "config": None, "run": None, "example_id": None})
             return welcome_blocks()
+        if low in ("try a sample run", "sample run", "guided run"):
+            return self.handle(session, action="guided_run", payload={})
         if low == "explore the 14 example scenarios" or action == "example_list":
             session["state"] = "examples"
             cards = [{"title": e["title"], "scenario_id": e["id"],
@@ -118,10 +134,30 @@ class Orchestrator:
                           "recorded engine output, not a fresh run. Pick one to open its scorecard."),
                     {"type": "scenario_cards", "cards": cards}]
 
+        # Guided run: preset scenario, default seed 42, straight into the
+        # same run path a config card uses (the frontend starts the run
+        # on the run_started block). The normal flow is untouched: after
+        # this run, "New experiment" resets to the welcome screen.
+        if action == "guided_run":
+            sid = payload.get("scenario_id") or GUIDED_RUN_PRESET
+            cfg = FLAGSHIP_CONFIGS.get(sid)
+            if not cfg:
+                return [_text("That sample run is not available. Pick an industry card instead.")]
+            session["industry"] = cfg["industry"]
+            session["scenario_id"] = sid
+            session["config"] = dict(cfg)
+            session["config"]["seed"] = 42
+            session["state"] = "running"
+            return [_text("Guided run — LinkedIn creator crowding-out, seed 42, running now through the same 7 stages as any experiment.\n\n"
+                          "What to look at when it lands:\n"
+                          "1. The headline: small-creator share falls while total creator sessions rise — and the verdict is Do Not Launch. A rising total can still be the wrong launch.\n"
+                          "2. Then ask 'Which tier gained the most?' — the top tier absorbed the gain, which is what proves the crowding-out story.\n\n"
+                          "After this run, tap 'New experiment' to start your own."),
+                    {"type": "run_started", "scenario_id": sid}]
         if action == "industry":
             ind = industry_by_id(payload.get("industry_id", ""))
             if not ind:
-                return [_text("I don't recognise that industry. Pick one of the three cards, or explore the example scenarios.")]
+                return [_text("I don't recognise that industry. Pick one of the four cards, or explore the example scenarios.")]
             session["industry"] = ind["id"]
             session["state"] = "scenario"
             return [_text(f"Great! Let's explore {ind['title'].lower()} experimentation.\n\nHere are the realistic experiments you can run."),
@@ -142,7 +178,7 @@ class Orchestrator:
             # Non-runnable scenario card clicked (no longer reachable from
             # the industry cards in Phase 2, kept as a guard).
             return [_text("That scenario isn't runnable — I won't fake a run for it. "
-                          "The runnable options are the 16 industry scenarios, plus the 14 example scenarios. "
+                          "The runnable options are the 20 industry scenarios, plus the 14 example scenarios. "
                           "Pick one of those, or tell me what you wanted to test and I'll point you to the closest match.")]
 
         if action == "example":
@@ -194,6 +230,21 @@ class Orchestrator:
                 unit_note = ("The analysis unit is the randomization unit — here that is the "
                              "ZIP/DMA, never the impressions or users inside a geo counted as "
                              "independent units.")
+            elif "cluster" in cfg["unit"]:
+                unit_note = ("The analysis unit is the randomization unit — here that is the "
+                             "team, never the developer: teammates share repos and reviews, so "
+                             "developer rows are measured but not independent. The primary "
+                             "estimate is CUPED-adjusted with cluster-robust standard errors "
+                             "by team, and the effective sample size is teams, not developers.")
+            elif "account" in cfg["unit"].lower():
+                unit_note = ("The analysis unit is the randomization unit — here that is the "
+                             "API developer account, never the app's end users: a model change "
+                             "hits all of an app's users together, so end users inside one "
+                             "account are never treated as independent experiments.")
+            elif cfg["unit"].startswith("Teams"):
+                unit_note = ("The analysis unit is the randomization unit — here that is the "
+                             "team: delegation is a team workflow, so team members are never "
+                             "treated as independent experiments.")
             else:
                 unit_note = ("The analysis unit is the randomization unit — here that is the "
                              "user, so each user counts once, and impressions or sessions from "
@@ -248,6 +299,8 @@ class Orchestrator:
     def _handle_custom(self, session, text, low):
         if not text:
             return [_text("Tell me what you'd like to test, in your own words, or pick a card above.")]
+        if low in ("try a sample run", "sample run", "guided run"):
+            return self.handle(session, action="guided_run", payload={})
         # One exception to platform-first: a named scenario topic beats
         # the platform. "LinkedIn ... top creators crowd out small
         # creators" is the crowding-out scenario, not the LinkedIn
@@ -266,6 +319,19 @@ class Orchestrator:
             else:
                 sid = "switchback_sos_pricing"
             return self.handle(session, action="scenario", payload={"scenario_id": sid})
+        # AI Labs keywords beat platform names, like crowding-out and
+        # switchback above: "coding agent" is the team rollout, not a
+        # generic team question, and "cowork delegation" is its own
+        # scenario. Generic scenario names only — no claim that any of
+        # these is a real company's internal product.
+        if "cowork" in low or "delegat" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "ai_cowork_delegation"})
+        if "coding agent" in low or "copilot" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "ai_team_coding_agent"})
+        if "model upgrade" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "ai_individual_model_upgrade"})
+        if "model swap" in low or "api account" in low or "app builder" in low or "app-builder" in low:
+            return self.handle(session, action="scenario", payload={"scenario_id": "ai_app_model_swap"})
         # Platform names win over topic words. The old order checked
         # "creator" before "linkedin", so "In LinkedIn, do top creators
         # crowd out small creators?" routed to Meta — the topic word
@@ -315,10 +381,11 @@ class Orchestrator:
             if e["title"].lower() in low or e["id"].replace("_", " ") in low:
                 return self.handle(session, action="example", payload={"scenario_id": e["id"]})
         return [_text("I can't map that to a runnable experiment yet, and I won't guess a design for it. "
-                      "The runnable options right now are the 16 industry scenarios — Reddit, Meta, TikTok, "
+                      "The runnable options right now are the 20 industry scenarios — Reddit, Meta, TikTok, "
                       "LinkedIn, DoorDash, DMA advertising, Uber, delivery-fee, Pharma DMA, HCP omnichannel, "
                       "field visits, cross-publisher, plus three switchback designs (SOS pricing, surge, "
-                      "dispatch batching) — plus the 14 example "
+                      "dispatch batching), plus four AI Labs designs (team coding-agent rollout, individual "
+                      "model upgrade, app-builder model swap, Cowork-style delegation) — plus the 14 example "
                       "scenarios. Which of those is closest to what you had in mind?")]
 
     # ------------------------------------------------------------ follow-ups

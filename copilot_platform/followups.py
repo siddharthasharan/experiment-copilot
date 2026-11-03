@@ -74,6 +74,35 @@ def exclude_top(df, result, scenario_id, n=5):
                         f"{'significant' if new['significant'] else 'not significant'}), recomputed with the same "
                         f"cluster-robust-by-region estimator as the headline. "
                         f"If the lift survives excluding the largest regions, it is not carried by them alone."}
+    # Cluster-randomized scenarios (AI Labs team coding-agent rollout):
+    # the unit is the team, not the developer row, so exclude-top drops
+    # whole teams and recomputes with the same CUPED-adjusted
+    # cluster-robust estimator as the headline. This branch must come
+    # before the generic spec branch, which would otherwise treat
+    # developer rows as units and rank them by team size.
+    spec = (result or {}).get("followup_spec") or {}
+    if spec.get("cluster_col"):
+        from .engine_extra import _cluster_cuped
+
+        cluster_col, base_col = spec["cluster_col"], spec["base_col"]
+        top = df.drop_duplicates(cluster_col).nlargest(n, base_col)[cluster_col].tolist()
+        sub = df[~df[cluster_col].isin(top)]
+        tr = sub["group"] == "treatment"
+        new = _cluster_cuped(sub[spec["post_col"]].values, sub[spec["pre_col"]].values,
+                             tr.values, sub[cluster_col].values,
+                             flip=bool(spec.get("lower_is_better")))
+        old = result["primary"]
+        noun = "teams" if cluster_col == "team_id" else "clusters"
+        return {"supported": True, "excluded": top, "n_remaining": int(len(sub)),
+                "old_lift_pct": old["lift_pct"], "new_lift_pct": new["lift_pct"],
+                "new_ci_low_pct": new["ci_low_pct"], "new_ci_high_pct": new["ci_high_pct"],
+                "new_p_value": new["p_value"], "new_significant": new["significant"],
+                "text": f"Excluding the {n} largest {noun} ({', '.join(str(x) for x in top)}) leaves {len(sub)} developers in {sub[cluster_col].nunique()} {noun}. "
+                        f"The primary lift moves from {old['lift_pct']:+.2f}% to {new['lift_pct']:+.2f}% "
+                        f"(95% CI [{new['ci_low_pct']:+.2f}%, {new['ci_high_pct']:+.2f}%], p={new['p_value']:.3g}, "
+                        f"{'significant' if new['significant'] else 'not significant'}), recomputed with the same "
+                        f"CUPED-adjusted, cluster-robust-by-team estimator as the headline. "
+                        f"If the lift survives excluding the largest teams, it is not carried by them alone."}
     if scenario_id == "doordash_zip_promotion":
         base_col, post_col, pre_col, unit_col = "baseline_orders", "post_orders", "pre_orders", "zip"
     elif scenario_id == "pharma_dma_publisher":
@@ -155,6 +184,20 @@ def largest_units(df, result, scenario_id, n=5, smallest=False):
         if not smallest:
             text += f" To see whether the headline result survives without them, ask 'Exclude the {n} largest {label}'."
         return {"supported": True, "units": ordered["region_id"].tolist(), "text": text}
+    spec = (result or {}).get("followup_spec") or {}
+    if spec.get("cluster_col"):
+        cluster_col, base_col = spec["cluster_col"], spec["base_col"]
+        per_cluster = df.drop_duplicates(cluster_col)
+        ordered = per_cluster.nsmallest(n, base_col) if smallest else per_cluster.nlargest(n, base_col)
+        total = float(per_cluster[base_col].sum())
+        share = float(ordered[base_col].sum() / total * 100) if total else 0.0
+        kind = "smallest" if smallest else "largest"
+        items = "; ".join(f"team {row[cluster_col]} ({row[base_col]:,.0f} developers)" for _, row in ordered.iterrows())
+        text = (f"The {n} {kind} teams by size are: {items}. "
+                f"Together they account for {share:.1f}% of developers.")
+        if not smallest:
+            text += f" To see whether the headline result survives without them, ask 'Exclude the {n} largest teams'."
+        return {"supported": True, "units": ordered[cluster_col].tolist(), "text": text}
     base_col, unit_col = _geo_cols(df, result, scenario_id)
     if base_col is None or unit_col not in df.columns or base_col not in df.columns:
         return {"supported": False,
@@ -273,6 +316,34 @@ def segment(df, result, scenario_id, segment_name):
                 "text": f"For {label}, orders per ZIP moved {r['lift_pct']:+.2f}% "
                         f"(95% CI [{r['ci_low_pct']:+.2f}%, {r['ci_high_pct']:+.2f}%], p={r['p_value']:.3g}, "
                         f"{'significant' if r['significant'] else 'not significant'})."}
+    # Cluster-randomized segment branch: same estimator as the
+    # scorecard segment table (CUPED-adjusted, cluster-robust), so the
+    # two answers agree. Must precede the generic branch below.
+    spec = (result or {}).get("followup_spec") or {}
+    if spec.get("cluster_col") and spec.get("segment_col") in df.columns:
+        labels = spec.get("segment_labels") or {}
+        match = None
+        for v in df[spec["segment_col"]].unique():
+            if str(v).lower() == seg.strip() or str(v).lower() in seg:
+                match = v
+                break
+        if match is None:
+            return {"supported": False,
+                    "text": "Segments for this experiment are: " + ", ".join(labels.values()) + "."}
+        label = labels.get(str(match), str(match))
+        sub = df[df[spec["segment_col"]] == match]
+        tr = sub["group"] == "treatment"
+        from .engine_extra import _cluster_cuped
+
+        r = _cluster_cuped(sub[spec["post_col"]].values, sub[spec["pre_col"]].values,
+                           tr.values, sub[spec["cluster_col"]].values,
+                           flip=bool(spec.get("lower_is_better")))
+        metric_word = "improvement" if spec.get("lower_is_better") else "lift"
+        return {"supported": True, "segment": label, **r,
+                "text": f"For {label} (n={len(sub):,} developers in {sub[spec['cluster_col']].nunique()} teams), the primary {metric_word} is "
+                        f"{r['lift_pct']:+.2f}% (95% CI [{r['ci_low_pct']:+.2f}%, {r['ci_high_pct']:+.2f}%], "
+                        f"p={r['p_value']:.3g}, {'significant' if r['significant'] else 'not significant'}), "
+                        f"with the same CUPED-adjusted, cluster-robust-by-team estimator as the headline."}
     # Generic Phase 2 branch: any scenario whose result carries a
     # followup_spec with a segment column uses the same CUPED estimator
     # as its scorecard segment table, so the two answers agree.

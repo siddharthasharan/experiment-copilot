@@ -50,6 +50,19 @@ def build_scorecard(config, result, trend, seed):
         kpis.append({"label": "Incremental prescriptions", "value": f"{business['incremental_rx']:,.0f}"})
     if "cost_per_incremental_rx_usd" in business:
         kpis.append({"label": "Cost / incremental prescription", "value": f"${business['cost_per_incremental_rx_usd']:,.2f}"})
+    if "cost_per_task_control_usd" in business:
+        kpis.append({"label": "Cost / task (control)", "value": f"${business['cost_per_task_control_usd']:,.4f}"})
+    if "cost_per_task_treatment_usd" in business:
+        kpis.append({"label": "Cost / task (treatment)", "value": f"${business['cost_per_task_treatment_usd']:,.4f}"})
+    if "cost_saving_per_1000_tasks_usd" in business:
+        kpis.append({"label": "Cost saved / 1,000 tasks", "value": f"${business['cost_saving_per_1000_tasks_usd']:,.0f}"})
+    # Cluster-randomized KPIs: the generic KPI above counts measured
+    # developers, but randomization happened at team level — relabel it
+    # and show the cluster count, or a reader will think n=1,095 teams.
+    _ci = result.get("cluster_info") or {}
+    if _ci:
+        kpis[3] = {"label": "Measured developers", "value": f"{result['n_units']:,}"}
+        kpis.append({"label": "Randomized teams (clusters)", "value": f"{_ci.get('n_clusters', 0):,}"})
     # Switchback KPIs: regions and washout counts are part of the design,
     # not footnotes — a reader should see how much data the washout cost.
     _sb = result.get("switchback") or {}
@@ -128,6 +141,11 @@ def build_scorecard(config, result, trend, seed):
                        "data: ask in chat to look at a single segment (new vs established users). "
                        "Excluding the largest units does not apply here — there are no geo units to "
                        "exclude. If the headline conclusion flips under a segment check, it was fragile.")
+    elif result["unit"] in ("accounts", "teams"):
+        _noun = "accounts" if result["unit"] == "accounts" else "teams"
+        sensitivity = (f"Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
+                       f"data: ask in chat to 'exclude the largest {_noun}' or to look at a single "
+                       f"segment. If the headline conclusion flips under those checks, it was fragile.")
     else:
         sensitivity = ("Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
                        "data: ask in chat to look at a single segment. "
@@ -149,11 +167,17 @@ def build_scorecard(config, result, trend, seed):
                 f"by itself prove the lift is robust. That is what the sensitivity checks below are for."),
         "clustering": ("Geo experiment: analysis is at the geo level, so clustering is handled by "
                        "the unit of analysis itself." if result["unit"] in ("ZIPs", "DMAs", "Cities", "Territories")
+                       else "Account/team-level experiment: analysis is at the randomization-unit level, so clustering is handled by the unit of analysis itself."
+                       if result["unit"] in ("accounts", "teams")
                        else "User-level randomization; no cluster adjustment required."),
         "interference": ("Spillover is a live risk in geo designs: neighbouring control units can be "
                          "affected. The follow-up 'exclude largest markets' and segment checks are "
                          "sensitivity analyses, not spillover proof."
                          if result["unit"] in ("ZIPs", "DMAs", "Cities", "Territories") else
+                         "Spillover inside a team is the design (teammates share repos and reviews); spillover across teams is limited but not zero (shared codebases, shared reviewers)."
+                         if result["unit"] == "teams" else
+                         "Spillover across accounts is limited — one account's model change does not change another account's traffic — but shared model capacity can couple arms; watch the latency guardrail."
+                         if result["unit"] == "accounts" else
                          "No geographic spillover structure in a user-level design."),
         "hte": (f"Segment effects from this run: {seg_text} Segment results are descriptive "
                 f"unless pre-specified."),
@@ -181,6 +205,19 @@ def build_scorecard(config, result, trend, seed):
                              f"{primary['lift_pct']:+.2f}% primary. Ask in chat to 'exclude the largest "
                              f"{_sb.get('region_label', 'regions')}' or to look at a single segment. "
                              f"Carryover lasting longer than one window would still contaminate the primary.")
+    # Cluster-randomized DS view: the generic SE line says Welch at the
+    # measured-unit level, which is wrong when the randomization unit is
+    # the team — override it with the actual cluster-robust estimator.
+    _ci = result.get("cluster_info") or {}
+    if _ci:
+        ds["se"] = (f"CUPED-adjusted, cluster-robust SEs by team ({primary.get('n_clusters', 0)} teams, "
+                    f"t with teams-1 df); primary n: control {primary['n_control']:,}, treatment "
+                    f"{primary['n_treatment']:,} developers.")
+        ds["clustering"] = (_ci.get("note", "") + " Treating developers as independent would overstate precision.")
+        ds["sensitivity"] = ("Sensitivity — re-analysis of this same run, NOT a new experiment and NOT new "
+                             "data: ask in chat to 'exclude the largest teams' or to look at a single "
+                             "segment (large vs small teams). If the headline conclusion flips under those "
+                             "checks, it was fragile.")
     watchouts = []
     if _sb:
         watchouts.append("Switchback unit: the analysis unit is the region-window, not the delivery or trip inside it. The headline averages unit means (unweighted), with cluster-robust SEs by region.")
@@ -197,6 +234,13 @@ def build_scorecard(config, result, trend, seed):
         watchouts.append("Publisher attribution: this design cannot identify individual publisher causal effects. Publisher figures are descriptive delivery shares only.")
     if config.get("id") == "linkedin_creator_crowding_out":
         watchouts.append("Exposure, not creator outcomes: randomization is at viewer level, so this measures what viewers saw (tier shares of sessions), not what creators earned or whether a specific creator was harmed. A creator-level claim would need creator randomization.")
+    if config.get("id") == "ai_team_coding_agent":
+        watchouts.append("Acceptance rate is NOT the primary: a high suggestion-acceptance rate can mean over-reliance, not quality. It is reported descriptively for the treatment arm only; the decision rests on cycle time with churn and security guardrails.")
+        watchouts.append("Cluster sample size: the effective sample size is teams, not developers. A result computed as if 1,095 developers were independent would overstate precision — the SEs here are cluster-robust by team.")
+    if config.get("id") == "ai_app_model_swap":
+        watchouts.append("Offline evals are a screen, not the decision: the primary is the ONLINE eval pass rate on live traffic. A model that wins offline can still lose online, and a cheaper model that loses slightly on evals is a cost tradeoff to decide explicitly, not a launch by default.")
+    if config.get("id") == "ai_cowork_delegation":
+        watchouts.append("Delegation vs rework: intervention-free completion only counts as a win if corrections do not eat it. The correction-rate guardrail veto exists because delegated work that humans must redo is cost shifted, not saved.")
     watchouts.append("Statistical power: a non-significant result is not proof of no effect — check the confidence interval width, not just the p-value.")
     watchouts.append("Novelty: early-period effects can decay. The trend chart shows whether the effect holds across the run.")
     return {

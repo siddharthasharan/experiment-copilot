@@ -70,7 +70,8 @@ def main():
     _new = ["meta_creator_recommendations", "tiktok_notifications", "linkedin_connections",
             "marketplace_dma_ads", "uber_driver_incentives", "delivery_fee_optimization",
             "hcp_omnichannel", "field_visits_sampling", "cross_publisher_budget"]
-    check("all 16 industry scenarios registered", len(_CFG) == 16 and
+    check("all 20 industry scenarios registered", len(_CFG) == 20 and
+          sum(len(v) for v in _IND.values()) == 20 and
           all(s in _CFG for ind in _IND.values() for s in ind))
     for _sid in _new:
         _a, _ra = run_flagship(_sid, seed=42)
@@ -87,6 +88,108 @@ def main():
         check(f"{_sid} scorecard segment matches engine",
               all(abs(s["lift_pct"] - next(x for x in _ra["segments"] if x["segment"] == s["segment"])["lift_pct"]) < 1e-9
                   for s in _sc["segments"]))
+    # AI Labs: 4 new scenarios, industries 3 -> 4, scenarios 16 -> 20.
+    from copilot_platform.scenarios import INDUSTRIES as _INDS
+    from copilot_platform.chat import GUIDED_RUN_PRESET
+    _ai = ["ai_team_coding_agent", "ai_individual_model_upgrade",
+           "ai_app_model_swap", "ai_cowork_delegation"]
+    check("AI Labs industry card exists", len(_INDS) == 4 and
+          _INDS[-1]["id"] == "ai_labs" and len(_IND["ai_labs"]) == 4)
+    _verdicts = {"ai_team_coding_agent": "LAUNCH",
+                 "ai_individual_model_upgrade": "LAUNCH",
+                 "ai_app_model_swap": "INCONCLUSIVE",
+                 "ai_cowork_delegation": "DONT_LAUNCH"}
+    for _sid in _ai:
+        _a, _ra = run_flagship(_sid, seed=42)
+        _b, _rb = run_flagship(_sid, seed=42)
+        check(f"{_sid} seed reproducible", _a.equals(_b) and _ra["primary"]["lift_pct"] == _rb["primary"]["lift_pct"])
+        _c, _ = run_flagship(_sid, seed=7)
+        check(f"{_sid} seed changes data", not _a.equals(_c))
+        check(f"{_sid} srm passes at seed 42", _ra["srm"]["failed"] is False)
+        check(f"{_sid} verdict is {_verdicts[_sid]}", _ra["verdict"] == _verdicts[_sid])
+        _cfg = dict(_CFG[_sid]); _cfg["seed"] = 42
+        _trend = _ra.pop("trend")
+        _sc = build_scorecard(_cfg, _ra, _trend, 42)
+        check(f"{_sid} scorecard lift matches engine", abs(_sc["primary_lift_pct"] - _ra["primary"]["lift_pct"]) < 1e-9)
+        check(f"{_sid} scorecard verdict matches engine", _sc["verdict"] == _ra["verdict"])
+        check(f"{_sid} scorecard segment matches engine",
+              all(abs(s["lift_pct"] - next(x for x in _ra["segments"] if x["segment"] == s["segment"])["lift_pct"]) < 1e-9
+                  for s in _sc["segments"]))
+    # Randomization unit per scenario: the unit is the lesson.
+    _df_t, _r_t = run_flagship("ai_team_coding_agent", seed=42)
+    check("coding-agent unit is team clusters", _r_t["unit"] == "developers" and
+          _r_t["cluster_info"]["n_clusters"] == 60 and _df_t["team_id"].nunique() == 60 and
+          _df_t.groupby("team_id")["group"].nunique().max() == 1)
+    _df_i, _r_i = run_flagship("ai_individual_model_upgrade", seed=42)
+    check("model-upgrade unit is users", _r_i["unit"] == "users" and len(_df_i) == 20000)
+    _df_a, _r_a = run_flagship("ai_app_model_swap", seed=42)
+    check("model-swap unit is accounts", _r_a["unit"] == "accounts" and
+          _df_a["account_id"].nunique() == 300 and
+          _df_a.groupby("account_id")["group"].nunique().max() == 1)
+    _df_w, _r_w = run_flagship("ai_cowork_delegation", seed=42)
+    check("cowork unit is teams", _r_w["unit"] == "teams" and _df_w["team_id"].nunique() == 80)
+    # Scorecard-followup agreement for AI scenarios (same estimator both sides).
+    _seg_t = followups.segment(_df_t, _r_t, "ai_team_coding_agent", "large")
+    check("coding-agent segment matches scorecard", _seg_t["supported"] and
+          abs(_seg_t["lift_pct"] - next(x for x in _r_t["segments"] if x["segment"] == "large")["lift_pct"]) < 1e-9)
+    _ex_t = followups.exclude_top(_df_t, _r_t, "ai_team_coding_agent", 5)
+    check("coding-agent exclude-top drops whole teams", _ex_t["supported"] and len(_ex_t["excluded"]) == 5)
+    _lg_t = followups.largest_units(_df_t, _r_t, "ai_team_coding_agent", 5)
+    check("coding-agent largest teams listed", _lg_t["supported"] and len(_lg_t["units"]) == 5)
+    _seg_a = followups.segment(_df_a, _r_a, "ai_app_model_swap", "large")
+    check("model-swap segment matches scorecard", _seg_a["supported"] and
+          abs(_seg_a["lift_pct"] - next(x for x in _r_a["segments"] if x["segment"] == "large")["lift_pct"]) < 1e-9)
+    _ex_a = followups.exclude_top(_df_a, _r_a, "ai_app_model_swap", 5)
+    check("model-swap exclude-top recomputes", _ex_a["supported"] and _ex_a["n_remaining"] == 295)
+    _lg_a = followups.largest_units(_df_a, _r_a, "ai_app_model_swap", 5)
+    check("model-swap largest accounts listed", _lg_a["supported"] and len(_lg_a["units"]) == 5)
+    _ex_w = followups.exclude_top(_df_w, _r_w, "ai_cowork_delegation", 5)
+    check("cowork exclude-top recomputes", _ex_w["supported"] and _ex_w["n_remaining"] == 75)
+    _seg_i = followups.segment(_df_i, _r_i, "ai_individual_model_upgrade", "new")
+    check("model-upgrade segment matches scorecard", _seg_i["supported"] and
+          abs(_seg_i["lift_pct"] - next(x for x in _r_i["segments"] if x["segment"] == "new")["lift_pct"]) < 1e-9)
+    _ex_i = followups.exclude_top(_df_i, _r_i, "ai_individual_model_upgrade", 5)
+    check("model-upgrade exclude-top honestly declined", not _ex_i["supported"])
+    # Chat routing keywords per AI scenario.
+    for _msg, _sid in [("coding agent rollout for my team", "ai_team_coding_agent"),
+                       ("model upgrade for subscribers", "ai_individual_model_upgrade"),
+                       ("model swap for app builders", "ai_app_model_swap"),
+                       ("cowork delegation for our team", "ai_cowork_delegation")]:
+        _s = new_session()
+        orch.handle(_s, message=_msg)
+        check(f"chat routes '{_msg}' to {_sid}", _s["scenario_id"] == _sid and _s["state"] == "config")
+    # AI Labs industry card renders 4 runnable cards.
+    _s = new_session()
+    _blocks = orch.handle(_s, action="industry", payload={"industry_id": "ai_labs"})
+    _cards = [b for b in _blocks if b["type"] == "scenario_cards"][0]["cards"]
+    check("ai labs cards all runnable", len(_cards) == 4 and all(c["runnable"] for c in _cards))
+    # Guided run: welcome block, preset action, scorecard match, normal flow intact.
+    _wb = welcome_blocks()
+    _gb = [b for b in _wb if b["type"] == "guided_run"]
+    check("welcome has guided-run block", len(_gb) == 1 and
+          _gb[0]["scenario_id"] == GUIDED_RUN_PRESET == "linkedin_creator_crowding_out")
+    _sg = new_session()
+    _gblocks = orch.handle(_sg, action="guided_run", payload={})
+    check("guided run presets crowding-out at seed 42",
+          _sg["scenario_id"] == "linkedin_creator_crowding_out" and _sg["config"]["seed"] == 42 and
+          _sg["state"] == "running" and any(b["type"] == "run_started" for b in _gblocks) and
+          "Do Not Launch" in _gblocks[0]["text"] and "Which tier gained" in _gblocks[0]["text"])
+    _df_g, _r_g = run_flagship("linkedin_creator_crowding_out", seed=42)
+    _cfg_g = dict(_CFG["linkedin_creator_crowding_out"]); _cfg_g["seed"] = 42
+    _trend_g = _r_g.pop("trend")
+    _sc_g = build_scorecard(_cfg_g, _r_g, _trend_g, 42)
+    check("guided preset scorecard matches engine",
+          _sc_g["verdict"] == "DONT_LAUNCH" and
+          abs(_sc_g["primary_lift_pct"] - _r_g["primary"]["lift_pct"]) < 1e-9)
+    _nb = orch.handle(_sg, message="New experiment")
+    check("normal flow works after guided run",
+          _sg["state"] == "welcome" and any(b["type"] == "guided_run" for b in _nb))
+    _blocks = orch.handle(_sg, action="industry", payload={"industry_id": "social"})
+    _blocks = orch.handle(_sg, action="scenario", payload={"scenario_id": "reddit_feed_ranking"})
+    check("normal industry -> scenario -> config after guided run",
+          _sg["state"] == "config" and any(b["type"] == "config" for b in _blocks))
+    _app_js = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "static", "app.js")).read()
+    check("frontend has guided-run button", "guided_run" in _app_js and "Try a sample run" in _app_js)
     _df_u, _r_u = run_flagship("uber_driver_incentives", seed=42)
     _drv = followups.driver_availability(_df_u, _r_u, "uber_driver_incentives")
     check("uber driver utilization follow-up", _drv["supported"] and "utilization" in _drv["text"])

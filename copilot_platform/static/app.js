@@ -93,6 +93,16 @@ function renderBlocks(blocks) {
       wrap.querySelector('[data-a="modify"]').onclick = () => sendAction("modify", {}, "Modify Design");
       wrap.querySelector('[data-a="explain"]').onclick = () => sendAction("explain", {}, "Explain Methodology");
       $("messages").appendChild(wrap);
+    } else if (b.type === "guided_run") {
+      const wrap = document.createElement("div");
+      wrap.className = "config-card guided-run";
+      wrap.innerHTML = `<h3>${esc(b.title)}</h3><p>${esc(b.description)}</p><button class="btn" data-a="guided">Try a sample run</button>`;
+      wrap.querySelector('[data-a="guided"]').onclick = () => sendAction("guided_run", { scenario_id: b.scenario_id }, b.title);
+      $("messages").appendChild(wrap);
+    } else if (b.type === "run_started") {
+      // Guided run: the server has preset the scenario and config, so
+      // start the same run + polling flow the config card uses.
+      startRun();
     } else if (b.type === "example_scorecard") {
       // Panel is opened by the server response scorecard; nothing in chat.
     } else if (b.type === "scorecard_open") {

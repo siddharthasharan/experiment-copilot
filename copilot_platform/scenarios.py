@@ -22,6 +22,9 @@ INDUSTRIES = [
     {"id": "pharma", "title": "Regulated Pharma & Omnichannel",
      "examples": "Pharmaceutical commercial analytics",
      "focus": "DTC advertising, digital publishers, HCP outreach, field visits, sampling, and patient outcomes."},
+    {"id": "ai_labs", "title": "AI Labs",
+     "examples": "Coding agents, model upgrades, API platforms, delegated work",
+     "focus": "One AI company is B2B and B2C at once, so each scenario uses a different randomization unit: team clusters, individual users, API accounts, and teams. The unit is the lesson."},
 ]
 
 FLAGSHIP_CONFIGS = {
@@ -322,7 +325,87 @@ FLAGSHIP_CONFIGS.update({
     },
 })
 
-# Phase 2 + switchback: all 16 industry scenarios are now runnable.
+# AI Labs: 4 more runnable scenarios (industries 3 -> 4, scenarios 16 -> 20).
+FLAGSHIP_CONFIGS.update({
+    "ai_team_coding_agent": {
+        "id": "ai_team_coding_agent", "industry": "ai_labs",
+        "title": "Team coding-agent rollout (cluster-randomized)",
+        "name": "Team coding-agent rollout experiment",
+        "hypothesis": "Giving a team a coding agent will shorten PR cycle time, without raising code churn or security findings.",
+        "treatment": "Coding agent enabled for the whole team",
+        "control": "No coding agent",
+        "unit": "Teams (cluster-randomized; developers are the measured units, teams are the randomization units)",
+        "population": "60 teams, 5-30 developers each (default interactive size; seed 42)",
+        "baseline": "Pre-period PR cycle time per developer, same teams",
+        "duration": "28 days",
+        "primary": "PR cycle time (hours) — reported as improvement, positive = faster",
+        "secondary": ["Code churn rate (guardrail)", "Security findings per developer (guardrail)",
+                      "Suggestion acceptance rate (descriptive only, treatment arm — never the primary)"],
+        "guardrails": "Code churn must not rise significantly by more than 10%; security findings must not rise significantly by more than 20%; SRM on teams must pass.",
+        "method": "CUPED-adjusted cycle time with cluster-robust SEs by team (effective sample size is teams, not developers); Welch 95% CI for guardrails; SRM chi-square check on teams",
+        "followups": ["Why is this statistically significant?", "Explain CUPED",
+                      "Show results for large teams", "Show results for small teams",
+                      "Exclude the five largest teams", "What are the five largest teams?"],
+    },
+    "ai_individual_model_upgrade": {
+        "id": "ai_individual_model_upgrade", "industry": "ai_labs",
+        "title": "Individual model upgrade (user-randomized)",
+        "name": "Individual model upgrade experiment",
+        "hypothesis": "A new model version will raise task success for individual subscribers, without blowing up cost per task or latency.",
+        "treatment": "New model version",
+        "control": "Current model version",
+        "unit": "Users (individual subscribers, randomized at user level)",
+        "population": "20,000 individual subscribers (default interactive size; seed 42)",
+        "baseline": "Pre-period task success rate, same users",
+        "duration": "28 days",
+        "primary": "Task success rate",
+        "secondary": ["7-day retention proxy", "Cost per task in dollars (guardrail)", "Latency in ms (guardrail)"],
+        "guardrails": "Cost per task must not rise significantly by more than 10%; latency must not rise significantly by more than 20%; SRM must pass.",
+        "method": "CUPED with pre-period task success; Welch 95% CI; SRM chi-square check",
+        "followups": ["Why is this statistically significant?", "Explain CUPED",
+                      "Show results for new customers", "Show results for established users"],
+    },
+    "ai_app_model_swap": {
+        "id": "ai_app_model_swap", "industry": "ai_labs",
+        "title": "App-builder model swap (account-randomized)",
+        "name": "App-builder model swap experiment",
+        "hypothesis": "A cheaper model variant will hold online eval pass rate while cutting cost per task for app builders.",
+        "treatment": "Cheaper model variant for the whole API account",
+        "control": "Current model for the whole API account",
+        "unit": "API developer accounts (randomized at account level; a model change hits all of an app's users together)",
+        "population": "300 developer accounts (default interactive size; seed 42)",
+        "baseline": "Pre-period online eval pass rate, same accounts",
+        "duration": "28 days",
+        "primary": "Eval pass rate (online, not offline)",
+        "secondary": ["Cost per task in dollars (explicit tradeoff)", "Latency p90 in ms (guardrail)", "Error rate (guardrail)"],
+        "guardrails": "Latency p90 must not rise significantly by more than 15%; error rate must not rise significantly by more than 20%; SRM must pass.",
+        "method": "CUPED with pre-period eval rate; Welch 95% CI across accounts; SRM chi-square check. Offline evals are a screen, not the decision: the primary is measured on live traffic.",
+        "followups": ["Why is this statistically significant?", "Exclude the five largest accounts",
+                      "What are the five largest accounts?", "Show results for large accounts",
+                      "Show results for small accounts"],
+    },
+    "ai_cowork_delegation": {
+        "id": "ai_cowork_delegation", "industry": "ai_labs",
+        "title": "Cowork-style task delegation (team-randomized)",
+        "name": "Cowork-style delegation experiment",
+        "hypothesis": "Letting teams delegate whole tasks will raise tasks completed without human intervention, without raising corrections or accuracy failures.",
+        "treatment": "Whole-task delegation enabled for the team",
+        "control": "Chat-only assistance, no delegation",
+        "unit": "Teams (randomized at team level; delegation is a team workflow)",
+        "population": "80 knowledge-work teams (default interactive size; seed 42)",
+        "baseline": "Pre-period intervention-free completion share, same teams",
+        "duration": "28 days",
+        "primary": "Tasks completed without human intervention (share)",
+        "secondary": ["Correction rate (guardrail)", "Accuracy spot-check failure rate (guardrail)"],
+        "guardrails": "Correction rate must not rise significantly by more than 15%; spot-check failures must not rise significantly by more than 10%; SRM must pass.",
+        "method": "CUPED with pre-period completion share; Welch 95% CI across teams; SRM chi-square check",
+        "followups": ["Why is this statistically significant?", "Exclude the five largest teams",
+                      "What are the five largest teams?", "Show results for large teams",
+                      "Show results for small teams"],
+    },
+})
+
+# Phase 2 + switchback + AI Labs: all 20 industry scenarios are now runnable.
 # The industry card list holds scenario ids; chat.py renders a card
 # runnable exactly when its id is in FLAGSHIP_CONFIGS, so no card can
 # claim to run without an engine behind it.
@@ -336,6 +419,8 @@ INDUSTRY_SCENARIOS = {
                     "switchback_batching"],
     "pharma": ["pharma_dma_publisher", "hcp_omnichannel",
                "field_visits_sampling", "cross_publisher_budget"],
+    "ai_labs": ["ai_team_coding_agent", "ai_individual_model_upgrade",
+                "ai_app_model_swap", "ai_cowork_delegation"],
 }
 
 

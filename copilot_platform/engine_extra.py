@@ -1149,6 +1149,454 @@ def analyze_switchback_batching(df, progress=None):
     return out
 
 
+# ------------------------------------------------- AI Labs experiments
+# Teaching point of this section: one AI company is B2B and B2C at
+# once, so each scenario uses a different randomization unit — the
+# unit is the lesson, not a footnote. Generic scenario names inspired
+# by public engineering writing (Statsig cluster randomization,
+# GitHub Copilot / Claude Code / Codex / Cowork patterns); nothing
+# here is presented as a real company's internal product and there is
+# no affiliation claim. All data are synthetic.
+#
+# - Team coding-agent rollout: CLUSTER-randomized by team. Teammates
+#   share repos and reviews, so user-level randomization would spill
+#   over. Randomize teams, measure per developer, and the sample size
+#   that matters is the number of clusters (Statsig B2B pattern).
+# - Individual model upgrade: USER-randomized (individual subscribers
+#   mostly do not interfere with each other).
+# - App-builder model swap: ACCOUNT-randomized by API developer
+#   account (a prompt/model change hits all of that app's users
+#   together). The tradeoff is explicit: cost per task is a business
+#   outcome, not a footnote, and a superiority verdict on evals does
+#   not by itself settle a cost-motivated swap.
+# - Cowork delegation: TEAM-randomized (knowledge-work teams
+#   delegating whole tasks, not chatting). The trap is symmetric to
+#   the coding-agent one: completion without intervention is only a
+#   win if corrections do not eat it.
+def _cuped_adjusted(post, pre, treat):
+    """CUPED adjustment (theta from control only), returned so a
+    cluster-robust estimator can run on the adjusted outcome. Same
+    theta rule as engine.cuped_lift; the SE, not the adjustment, is
+    what changes for clustered data."""
+    post = np.asarray(post, dtype=float); pre = np.asarray(pre, dtype=float)
+    treat = np.asarray(treat, dtype=bool); ctrl = ~treat
+    var_pre = float(np.var(pre[ctrl])) if int(ctrl.sum()) > 1 else 0.0
+    theta = float(np.cov(post[ctrl], pre[ctrl])[0, 1] / var_pre) if var_pre > 0 else 0.0
+    adj = post - theta * (pre - float(np.mean(pre)))
+    reduction = float((1.0 - adj.var(ddof=1) / post.var(ddof=1)) * 100) if post.var(ddof=1) > 0 else 0.0
+    return adj, theta, reduction
+
+
+def _cluster_cuped(post, pre, treat, clusters, flip=False):
+    """Cluster-robust lift on the CUPED-adjusted outcome. flip=True
+    for lower-is-better primaries (PR cycle time): the returned lift
+    is the improvement, so positive means faster, and the CI is
+    negated and swapped to match. Means stay the adjusted means,
+    exactly as engine.cuped_lift reports adjusted means."""
+    adj, theta, reduction = _cuped_adjusted(post, pre, treat)
+    raw = cluster_robust_lift(adj, treat, clusters)
+    out = dict(raw)
+    out["variance_reduction_pct"] = reduction
+    out["theta"] = theta
+    if flip:
+        out["lift_pct"] = -raw["lift_pct"]
+        out["ci_low_pct"] = -raw["ci_high_pct"]
+        out["ci_high_pct"] = -raw["ci_low_pct"]
+    return out
+
+
+def _rate_trend(rng, duration_days, control_level, treat_level, sigma=0.03):
+    days = np.arange(1, duration_days + 1)
+    return pd.DataFrame([{"day": int(d),
+                          "control": float(control_level * rng.lognormal(0, sigma)),
+                          "treatment": float(treat_level * rng.lognormal(0, sigma))}
+                         for d in days])
+
+
+# --------------------------------------- AI Labs: team coding-agent rollout
+def generate_ai_team_coding_agent(seed=42, duration_days=28):
+    """Cluster-randomized coding-agent rollout. 60 teams (5-30
+    developers each), matched pairs by team mean pre-period PR cycle
+    time. The agent is assigned per team, so every developer on a
+    team shares the arm — that is the design, not a bug, because
+    teammates review each other's PRs. Primary: PR cycle time in
+    hours (lower is better, so the reported lift is the improvement).
+    Guardrails: code churn rate and security findings per developer.
+    Acceptance rate is recorded for the treatment arm only and is
+    deliberately NOT a metric: a high acceptance rate can mean
+    over-reliance, not quality, so it must never be the primary."""
+    rng = np.random.default_rng(seed)
+    n_teams = 60
+    team_size = rng.integers(5, 31, size=n_teams)
+    team_base = rng.lognormal(mean=np.log(18.0), sigma=0.30, size=n_teams)
+    team_mean_pre = team_base * np.exp(0.5 * 0.22 ** 2)
+    treat_team = _matched_pairs(rng, team_mean_pre)
+    rows = []
+    dev_id = 0
+    for t in range(n_teams):
+        n_dev = int(team_size[t])
+        pre = team_base[t] * rng.lognormal(0, 0.22, size=n_dev)
+        post = pre * (1 - 0.08 if treat_team[t] else 1.0) * rng.lognormal(0, 0.15, size=n_dev)
+        churn = np.clip(rng.normal(0.120, 0.05, size=n_dev) + (0.003 if treat_team[t] else 0.0), 0.01, 0.6)
+        security = rng.poisson(0.80 if not treat_team[t] else 0.84, size=n_dev)
+        acceptance = rng.beta(17, 33, size=n_dev) if treat_team[t] else np.full(n_dev, np.nan)
+        for i in range(n_dev):
+            dev_id += 1
+            rows.append({"developer_id": dev_id, "team_id": t + 1,
+                         "group": "treatment" if treat_team[t] else "control",
+                         "segment": "large" if n_dev >= int(np.median(team_size)) else "small",
+                         "team_size": n_dev,
+                         "pre_cycle_hours": round(float(pre[i]), 2),
+                         "post_cycle_hours": round(float(post[i]), 2),
+                         "churn_rate": round(float(churn[i]), 4),
+                         "security_findings": int(security[i]),
+                         "acceptance_rate": (None if np.isnan(acceptance[i]) else round(float(acceptance[i]), 3))})
+    df = pd.DataFrame(rows)
+    trend = _rate_trend(rng, duration_days, 18.0, 18.0 * 0.92)
+    return df, trend
+
+
+def analyze_ai_team_coding_agent(df, progress=None):
+    t0 = time.time()
+    treat = (df["group"] == "treatment").values
+    n_teams = int(df["team_id"].nunique())
+    n_trt_teams = int(df.drop_duplicates("team_id").query("group == 'treatment'").shape[0])
+    if progress:
+        progress("Generating synthetic data", f"{len(df):,} developers in {n_teams} teams, seed recorded in config")
+        progress("Validating entity relationships", "one row per developer; every developer belongs to exactly one team")
+        progress("Assigning treatment and control", f"control {n_teams - n_trt_teams} / treatment {n_trt_teams} teams (matched pairs by baseline cycle time)")
+    srm = srm_check(n_teams - n_trt_teams, n_trt_teams)
+    if progress:
+        progress("Checking baseline balance", f"SRM p={srm['p_value']:.3f} ({'FAIL' if srm['failed'] else 'pass'}) — SRM is on teams, the randomization unit")
+    primary = _cluster_cuped(df["post_cycle_hours"].values, df["pre_cycle_hours"].values,
+                             treat, df["team_id"].values, flip=True)
+    churn = welch_lift(df.loc[~treat, "churn_rate"], df.loc[treat, "churn_rate"])
+    security = welch_lift(df.loc[~treat, "security_findings"], df.loc[treat, "security_findings"])
+    guard_failed = bool((churn["significant"] and churn["lift_pct"] > 10) or
+                        (security["significant"] and security["lift_pct"] > 20))
+    verdict = decide(primary, guard_failed, srm["failed"])
+    if progress:
+        progress("Computing experiment metrics", f"cycle-time improvement {primary['lift_pct']:+.2f}% (CUPED-adjusted, cluster-robust SEs by team)")
+        progress("Evaluating guardrails and statistical validity", f"churn {churn['lift_pct']:+.1f}%, security findings {security['lift_pct']:+.1f}%")
+        progress("Generating the scorecard", f"verdict {verdict} in {time.time() - t0:.2f}s")
+    segments = []
+    for seg, sub in df.groupby("segment"):
+        tr = (sub["group"] == "treatment").values
+        segments.append({"segment": seg, **_cluster_cuped(sub["post_cycle_hours"].values,
+                                                         sub["pre_cycle_hours"].values, tr,
+                                                         sub["team_id"].values, flip=True)})
+    acceptance = float(df.loc[treat, "acceptance_rate"].mean())
+    business_reason = None
+    if verdict == "LAUNCH":
+        business_reason = (f"Launch: PR cycle time improved {primary['lift_pct']:+.1f}% with guardrails passed. "
+                           f"Treatment-arm suggestion acceptance averaged {acceptance:.0%} — reported descriptively only, "
+                           "never as the decision metric, because high acceptance can mean over-reliance.")
+    elif guard_failed:
+        business_reason = ("Do not launch on guardrails: cycle time moved, but churn or security findings rose "
+                           "past the veto bar. A faster PR that introduces more defects is not a win.")
+    return {"primary": primary, "guardrail": churn, "security": security, "srm": srm,
+            "verdict": verdict, "segments": segments, "guardrail_failed": guard_failed,
+            "n_units": int(len(df)), "unit": "developers",
+            "cluster_info": {"n_clusters": n_teams, "cluster_label": "teams",
+                             "measured_unit": "developers",
+                             "note": "Randomized by team, measured per developer; SEs are cluster-robust by team, so the effective sample size is teams, not developers."},
+            "business_reason": business_reason,
+            "metrics": [
+                {"name": "PR cycle time (hours; lift = improvement, positive = faster)", "control": primary["control_mean"],
+                 "treatment": primary["treatment_mean"], "lift_pct": primary["lift_pct"],
+                 "ci_low_pct": primary["ci_low_pct"], "ci_high_pct": primary["ci_high_pct"],
+                 "p_value": primary["p_value"], "method": "CUPED-adjusted, cluster-robust SEs by team; positive = faster", "guardrail": False},
+                {"name": "Code churn rate", "control": churn["control_mean"],
+                 "treatment": churn["treatment_mean"], "lift_pct": churn["lift_pct"],
+                 "ci_low_pct": churn["ci_low_pct"], "ci_high_pct": churn["ci_high_pct"],
+                 "p_value": churn["p_value"], "method": "Welch (developer level, team-clustered in the primary)", "guardrail": True},
+                {"name": "Security findings / developer", "control": security["control_mean"],
+                 "treatment": security["treatment_mean"], "lift_pct": security["lift_pct"],
+                 "ci_low_pct": security["ci_low_pct"], "ci_high_pct": security["ci_high_pct"],
+                 "p_value": security["p_value"], "method": "Welch (developer level)", "guardrail": True}],
+            "business": {"acceptance_rate_treatment": acceptance,
+                         "impact_text": (f"PR cycle time improved {primary['lift_pct']:+.1f}% "
+                                         f"({primary['control_mean']:.1f}h to {primary['treatment_mean']:.1f}h, CUPED-adjusted means). "
+                                         f"Treatment-arm suggestion acceptance averaged {acceptance:.0%} — descriptive only, not the decision metric. "
+                                         "Those figures come from the generated data, not from the headline lift alone.")},
+            "followup_spec": {"post_col": "post_cycle_hours", "pre_col": "pre_cycle_hours",
+                              "base_col": "team_size", "unit_col": "team_id",
+                              "cluster_col": "team_id", "lower_is_better": True,
+                              "segment_col": "segment",
+                              "segment_labels": {"large": "large teams", "small": "small teams"}}}
+
+
+# --------------------------------------- AI Labs: individual model upgrade
+def generate_ai_individual_model_upgrade(seed=42, duration_days=28):
+    """User-randomized model upgrade for individual subscribers.
+    Individual users mostly do not interfere with each other, so the
+    user is the right unit here — the contrast with the team
+    scenarios in this section is the point. Primary: task success
+    rate (CUPED on pre-period success). Secondary: 7-day retention
+    proxy. Guardrails: cost per task (tokens, $) and latency."""
+    rng = np.random.default_rng(seed)
+    n_users = 20000
+    treat = rng.random(n_users) < 0.5
+    is_new = rng.random(n_users) < 0.30
+    pre = np.clip(rng.normal(0.62, 0.15, size=n_users), 0.10, 0.95)
+    effect = np.where(is_new, 0.06, 0.045)
+    post = np.clip(pre * (1 + np.where(treat, effect, 0)) + rng.normal(0, 0.05, size=n_users), 0.05, 1.0)
+    cost = rng.lognormal(mean=np.log(0.021), sigma=0.40, size=n_users) * np.where(treat, 1.048, 1.0)
+    latency = rng.lognormal(mean=np.log(820.0), sigma=0.30, size=n_users) * np.where(treat, 1.03, 1.0)
+    retained = (rng.random(n_users) < np.where(treat, 0.65, 0.62)).astype(int)
+    df = pd.DataFrame({"user_id": np.arange(n_users), "group": np.where(treat, "treatment", "control"),
+                       "segment": np.where(is_new, "new", "established"),
+                       "pre_task_success": np.round(pre, 4), "post_task_success": np.round(post, 4),
+                       "cost_per_task_usd": np.round(cost, 5), "latency_ms": np.round(latency, 1),
+                       "retained_7d": retained})
+    return df, _daily_trend(rng, duration_days, 0.05)
+
+
+def analyze_ai_individual_model_upgrade(df, progress=None):
+    t0 = time.time()
+    treat = (df["group"] == "treatment").values
+    if progress:
+        progress("Generating synthetic data", f"{len(df):,} individual subscribers, seed recorded in config")
+        progress("Validating entity relationships", "one row per user; pre/post task success present")
+        progress("Assigning treatment and control", f"control {int((~treat).sum()):,} / treatment {int(treat.sum()):,} users")
+    srm = srm_check(int((~treat).sum()), int(treat.sum()))
+    if progress:
+        progress("Checking baseline balance", f"SRM p={srm['p_value']:.3f} ({'FAIL' if srm['failed'] else 'pass'})")
+    primary = cuped_lift(df["post_task_success"].values, df["pre_task_success"].values, treat)
+    cost = welch_lift(df.loc[~treat, "cost_per_task_usd"], df.loc[treat, "cost_per_task_usd"])
+    latency = welch_lift(df.loc[~treat, "latency_ms"], df.loc[treat, "latency_ms"])
+    retention = welch_lift(df.loc[~treat, "retained_7d"], df.loc[treat, "retained_7d"])
+    guard_failed = bool((cost["significant"] and cost["lift_pct"] > 10) or
+                        (latency["significant"] and latency["lift_pct"] > 20))
+    verdict = decide(primary, guard_failed, srm["failed"])
+    if progress:
+        progress("Computing experiment metrics", f"task success lift {primary['lift_pct']:+.2f}% (CUPED, user level)")
+        progress("Evaluating guardrails and statistical validity", f"cost per task {cost['lift_pct']:+.1f}%, latency {latency['lift_pct']:+.1f}%")
+        progress("Generating the scorecard", f"verdict {verdict} in {time.time() - t0:.2f}s")
+    segments = []
+    for seg, sub in df.groupby("segment"):
+        tr = (sub["group"] == "treatment").values
+        segments.append({"segment": seg, **cuped_lift(sub["post_task_success"].values,
+                                                     sub["pre_task_success"].values, tr)})
+    return {"primary": primary, "guardrail": cost, "latency": latency, "retention": retention, "srm": srm,
+            "verdict": verdict, "segments": segments, "guardrail_failed": guard_failed,
+            "n_units": int(len(df)), "unit": "users",
+            "metrics": [
+                {"name": "Task success rate", "control": primary["control_mean"],
+                 "treatment": primary["treatment_mean"], "lift_pct": primary["lift_pct"],
+                 "ci_low_pct": primary["ci_low_pct"], "ci_high_pct": primary["ci_high_pct"],
+                 "p_value": primary["p_value"], "method": "CUPED (pre-period task success)", "guardrail": False},
+                {"name": "7-day retention proxy", "control": retention["control_mean"],
+                 "treatment": retention["treatment_mean"], "lift_pct": retention["lift_pct"],
+                 "ci_low_pct": retention["ci_low_pct"], "ci_high_pct": retention["ci_high_pct"],
+                 "p_value": retention["p_value"], "method": "Welch (user level)", "guardrail": False},
+                {"name": "Cost per task ($)", "control": cost["control_mean"],
+                 "treatment": cost["treatment_mean"], "lift_pct": cost["lift_pct"],
+                 "ci_low_pct": cost["ci_low_pct"], "ci_high_pct": cost["ci_high_pct"],
+                 "p_value": cost["p_value"], "method": "Welch (user level)", "guardrail": True},
+                {"name": "Latency (ms)", "control": latency["control_mean"],
+                 "treatment": latency["treatment_mean"], "lift_pct": latency["lift_pct"],
+                 "ci_low_pct": latency["ci_low_pct"], "ci_high_pct": latency["ci_high_pct"],
+                 "p_value": latency["p_value"], "method": "Welch (user level)", "guardrail": True}],
+            "business": {"cost_per_task_control_usd": float(cost["control_mean"]),
+                         "cost_per_task_treatment_usd": float(cost["treatment_mean"]),
+                         "impact_text": (f"Task success moved {primary['lift_pct']:+.1f}% and the 7-day retention proxy moved "
+                                         f"{retention['lift_pct']:+.1f}%. Cost per task moved {cost['lift_pct']:+.1f}% "
+                                         f"(${cost['control_mean']:.4f} to ${cost['treatment_mean']:.4f}) and latency "
+                                         f"{latency['lift_pct']:+.1f}% — both inside their veto bars. Those figures come from "
+                                         "the generated data, not from the headline lift alone.")},
+            "followup_spec": {"post_col": "post_task_success", "pre_col": "pre_task_success",
+                              "segment_col": "segment",
+                              "segment_labels": {"new": "new users", "established": "established users"}}}
+
+
+# --------------------------------------- AI Labs: app-builder model swap
+def generate_ai_app_model_swap(seed=42, duration_days=28):
+    """Account-randomized model swap for app builders. A prompt or
+    model change hits every user of an app at once, so the developer
+    account (API key owner) is the randomization unit — randomizing
+    end users would split one app across arms. 300 accounts, matched
+    pairs by baseline eval rate. Treatment is the cheaper model
+    variant: eval pass rate is the primary, cost per task is the
+    explicit tradeoff. Guardrails: latency p90 and error rate.
+    Honest caveat carried into the scorecard: an offline eval win is
+    a screen, not the decision — the primary here is the ONLINE eval
+    pass rate, and a model that wins offline can still lose online."""
+    rng = np.random.default_rng(seed)
+    n = 300
+    baseline = np.clip(rng.normal(0.72, 0.08, size=n), 0.40, 0.95)
+    baseline_tasks = rng.lognormal(mean=8.0, sigma=0.6, size=n)
+    treat = _matched_pairs(rng, baseline)
+    pre = np.clip(baseline * rng.lognormal(0, 0.06, size=n), 0.05, 1.0)
+    post = np.clip(baseline * rng.lognormal(0, 0.08, size=n), 0.05, 1.0)
+    post = np.where(treat, np.clip(post * 0.988, 0.05, 1.0), post)
+    cost = rng.lognormal(mean=np.log(0.42), sigma=0.25, size=n) * np.where(treat, 0.60, 1.0)
+    latency = rng.lognormal(mean=np.log(1450.0), sigma=0.20, size=n) * np.where(treat, 1.02, 1.0)
+    error = np.clip(rng.normal(0.018, 0.006, size=n) + np.where(treat, 0.001, 0.0), 0.001, 0.10)
+    seg = np.where(baseline_tasks >= np.median(baseline_tasks), "large", "small")
+    df = pd.DataFrame({"account_id": np.arange(1, n + 1), "group": np.where(treat, "treatment", "control"),
+                       "segment": seg, "baseline_tasks": np.round(baseline_tasks, 1),
+                       "pre_eval_rate": np.round(pre, 4), "post_eval_rate": np.round(post, 4),
+                       "cost_per_task_usd": np.round(cost, 4), "latency_p90_ms": np.round(latency, 1),
+                       "error_rate": np.round(error, 4)})
+    return df, _rate_trend(rng, duration_days, 0.72, 0.72 * 0.988)
+
+
+def analyze_ai_app_model_swap(df, progress=None):
+    t0 = time.time()
+    treat = (df["group"] == "treatment").values
+    if progress:
+        progress("Generating synthetic data", f"{len(df)} developer accounts, seed recorded in config")
+        progress("Validating entity relationships", "one row per account; pre/post eval rates present")
+        progress("Assigning treatment and control", f"control {int((~treat).sum())} / treatment {int(treat.sum())} accounts (matched pairs by baseline eval rate)")
+    srm = srm_check(int((~treat).sum()), int(treat.sum()))
+    if progress:
+        progress("Checking baseline balance", f"SRM p={srm['p_value']:.3f} ({'FAIL' if srm['failed'] else 'pass'})")
+    primary = cuped_lift(df["post_eval_rate"].values, df["pre_eval_rate"].values, treat)
+    cost = welch_lift(df.loc[~treat, "cost_per_task_usd"], df.loc[treat, "cost_per_task_usd"])
+    latency = welch_lift(df.loc[~treat, "latency_p90_ms"], df.loc[treat, "latency_p90_ms"])
+    error = welch_lift(df.loc[~treat, "error_rate"], df.loc[treat, "error_rate"])
+    guard_failed = bool((latency["significant"] and latency["lift_pct"] > 15) or
+                        (error["significant"] and error["lift_pct"] > 20))
+    verdict = decide(primary, guard_failed, srm["failed"])
+    if progress:
+        progress("Computing experiment metrics", f"eval pass rate lift {primary['lift_pct']:+.2f}% (CUPED, account level)")
+        progress("Evaluating guardrails and statistical validity", f"cost per task {cost['lift_pct']:+.1f}%, latency p90 {latency['lift_pct']:+.1f}%, error rate {error['lift_pct']:+.1f}%")
+        progress("Generating the scorecard", f"verdict {verdict} in {time.time() - t0:.2f}s")
+    segments = []
+    for seg, sub in df.groupby("segment"):
+        tr = (sub["group"] == "treatment").values
+        segments.append({"segment": seg, **cuped_lift(sub["post_eval_rate"].values,
+                                                     sub["pre_eval_rate"].values, tr)})
+    saving_1000 = (cost["control_mean"] - cost["treatment_mean"]) * 1000
+    if verdict == "INCONCLUSIVE":
+        impact = (f"On evals alone this is a wash: eval pass rate moved {primary['lift_pct']:+.1f}% "
+                  f"({primary['control_mean']:.3f} to {primary['treatment_mean']:.3f}), not significant. On cost it is not a wash: "
+                  f"cost per task fell {cost['lift_pct']:+.1f}% (${cost['control_mean']:.2f} to ${cost['treatment_mean']:.2f}), "
+                  f"saving ${saving_1000:,.0f} per 1,000 tasks. If your bar is non-inferiority on evals (say, within 2pp), "
+                  "this clears it while saving real money — but the superiority rule above does not launch it, and that "
+                  "distinction is the decision, not a footnote. Those figures come from the generated data.")
+    elif primary["significant"] and primary["lift_pct"] < 0:
+        impact = (f"Eval pass rate fell significantly ({primary['lift_pct']:+.1f}%), so the cost saving "
+                  f"(${saving_1000:,.0f} per 1,000 tasks) does not rescue this swap under a superiority bar. "
+                  "A cheaper model that measurably degrades evals is a quality regression with a discount attached.")
+    else:
+        impact = (f"Eval pass rate moved {primary['lift_pct']:+.1f}% and cost per task moved {cost['lift_pct']:+.1f}% "
+                  f"(${cost['control_mean']:.2f} to ${cost['treatment_mean']:.2f}, ${saving_1000:,.0f} per 1,000 tasks). "
+                  "Those figures come from the generated data, not from the headline lift alone.")
+    return {"primary": primary, "guardrail": error, "cost": cost, "latency": latency, "srm": srm,
+            "verdict": verdict, "segments": segments, "guardrail_failed": guard_failed,
+            "n_units": int(len(df)), "unit": "accounts",
+            "metrics": [
+                {"name": "Eval pass rate (online)", "control": primary["control_mean"],
+                 "treatment": primary["treatment_mean"], "lift_pct": primary["lift_pct"],
+                 "ci_low_pct": primary["ci_low_pct"], "ci_high_pct": primary["ci_high_pct"],
+                 "p_value": primary["p_value"], "method": "CUPED (pre-period eval rate, account level)", "guardrail": False},
+                {"name": "Cost per task ($)", "control": cost["control_mean"],
+                 "treatment": cost["treatment_mean"], "lift_pct": cost["lift_pct"],
+                 "ci_low_pct": cost["ci_low_pct"], "ci_high_pct": cost["ci_high_pct"],
+                 "p_value": cost["p_value"], "method": "Welch (account level)", "guardrail": False},
+                {"name": "Latency p90 (ms)", "control": latency["control_mean"],
+                 "treatment": latency["treatment_mean"], "lift_pct": latency["lift_pct"],
+                 "ci_low_pct": latency["ci_low_pct"], "ci_high_pct": latency["ci_high_pct"],
+                 "p_value": latency["p_value"], "method": "Welch (account level)", "guardrail": True},
+                {"name": "Error rate", "control": error["control_mean"],
+                 "treatment": error["treatment_mean"], "lift_pct": error["lift_pct"],
+                 "ci_low_pct": error["ci_low_pct"], "ci_high_pct": error["ci_high_pct"],
+                 "p_value": error["p_value"], "method": "Welch (account level)", "guardrail": True}],
+            "business": {"cost_per_task_control_usd": float(cost["control_mean"]),
+                         "cost_per_task_treatment_usd": float(cost["treatment_mean"]),
+                         "cost_saving_per_1000_tasks_usd": float(saving_1000),
+                         "impact_text": impact},
+            "followup_spec": {"post_col": "post_eval_rate", "pre_col": "pre_eval_rate",
+                              "base_col": "baseline_tasks", "unit_col": "account_id",
+                              "segment_col": "segment",
+                              "segment_labels": {"large": "large accounts", "small": "small accounts"}}}
+
+
+# --------------------------------------- AI Labs: Cowork-style delegation
+def generate_ai_cowork_delegation(seed=42, duration_days=28):
+    """Team-randomized delegation of whole tasks (not chatting).
+    80 knowledge-work teams, matched pairs by baseline task volume.
+    Primary: tasks completed without human intervention (share of
+    delegated tasks). Guardrails: correction rate and accuracy
+    spot-check failures — delegation that has to be redone is not
+    delegation. The guardrail veto is the point of this scenario."""
+    rng = np.random.default_rng(seed)
+    n = 80
+    baseline_tasks = rng.lognormal(mean=5.5, sigma=0.5, size=n)
+    treat = _matched_pairs(rng, baseline_tasks)
+    base_share = np.clip(rng.normal(0.48, 0.10, size=n), 0.15, 0.85)
+    pre = np.clip(base_share + rng.normal(0, 0.03, size=n), 0.05, 0.95)
+    post = np.clip(base_share * np.where(treat, 1.06, 1.0) + rng.normal(0, 0.04, size=n), 0.05, 0.95)
+    correction = np.clip(rng.normal(0.11, 0.04, size=n) + np.where(treat, 0.020, 0.0), 0.01, 0.60)
+    spotcheck = np.clip(rng.normal(0.030, 0.012, size=n) + np.where(treat, 0.002, 0.0), 0.001, 0.20)
+    seg = np.where(baseline_tasks >= np.median(baseline_tasks), "large", "small")
+    df = pd.DataFrame({"team_id": np.arange(1, n + 1), "group": np.where(treat, "treatment", "control"),
+                       "segment": seg, "baseline_tasks": np.round(baseline_tasks, 1),
+                       "pre_completion_share": np.round(pre, 4), "post_completion_share": np.round(post, 4),
+                       "correction_rate": np.round(correction, 4), "spotcheck_failure_rate": np.round(spotcheck, 4)})
+    return df, _rate_trend(rng, duration_days, 0.48, 0.48 * 1.06)
+
+
+def analyze_ai_cowork_delegation(df, progress=None):
+    t0 = time.time()
+    treat = (df["group"] == "treatment").values
+    if progress:
+        progress("Generating synthetic data", f"{len(df)} teams, seed recorded in config")
+        progress("Validating entity relationships", "one row per team; pre/post completion shares present")
+        progress("Assigning treatment and control", f"control {int((~treat).sum())} / treatment {int(treat.sum())} teams (matched pairs by baseline task volume)")
+    srm = srm_check(int((~treat).sum()), int(treat.sum()))
+    if progress:
+        progress("Checking baseline balance", f"SRM p={srm['p_value']:.3f} ({'FAIL' if srm['failed'] else 'pass'})")
+    primary = cuped_lift(df["post_completion_share"].values, df["pre_completion_share"].values, treat)
+    correction = welch_lift(df.loc[~treat, "correction_rate"], df.loc[treat, "correction_rate"])
+    spotcheck = welch_lift(df.loc[~treat, "spotcheck_failure_rate"], df.loc[treat, "spotcheck_failure_rate"])
+    guard_failed = bool((correction["significant"] and correction["lift_pct"] > 15) or
+                        (spotcheck["significant"] and spotcheck["lift_pct"] > 10))
+    verdict = decide(primary, guard_failed, srm["failed"])
+    if progress:
+        progress("Computing experiment metrics", f"intervention-free completion lift {primary['lift_pct']:+.2f}% (CUPED, team level)")
+        progress("Evaluating guardrails and statistical validity", f"correction rate {correction['lift_pct']:+.1f}%, spot-check failures {spotcheck['lift_pct']:+.1f}%")
+        progress("Generating the scorecard", f"verdict {verdict} in {time.time() - t0:.2f}s")
+    segments = []
+    for seg, sub in df.groupby("segment"):
+        tr = (sub["group"] == "treatment").values
+        segments.append({"segment": seg, **cuped_lift(sub["post_completion_share"].values,
+                                                     sub["pre_completion_share"].values, tr)})
+    business_reason = None
+    if guard_failed:
+        business_reason = (f"Do not launch on guardrails: intervention-free completion rose {primary['lift_pct']:+.1f}%, "
+                           f"but the correction rate rose {correction['lift_pct']:+.1f}% (significant, past the 15% veto bar). "
+                           "Delegation that has to be corrected at that rate is not delegation — it is rework shifted to humans.")
+    return {"primary": primary, "guardrail": correction, "spotcheck": spotcheck, "srm": srm,
+            "verdict": verdict, "segments": segments, "guardrail_failed": guard_failed,
+            "n_units": int(len(df)), "unit": "teams",
+            "business_reason": business_reason,
+            "metrics": [
+                {"name": "Tasks completed without human intervention (share)", "control": primary["control_mean"],
+                 "treatment": primary["treatment_mean"], "lift_pct": primary["lift_pct"],
+                 "ci_low_pct": primary["ci_low_pct"], "ci_high_pct": primary["ci_high_pct"],
+                 "p_value": primary["p_value"], "method": "CUPED (pre-period completion share, team level)", "guardrail": False},
+                {"name": "Correction rate", "control": correction["control_mean"],
+                 "treatment": correction["treatment_mean"], "lift_pct": correction["lift_pct"],
+                 "ci_low_pct": correction["ci_low_pct"], "ci_high_pct": correction["ci_high_pct"],
+                 "p_value": correction["p_value"], "method": "Welch (team level)", "guardrail": True},
+                {"name": "Accuracy spot-check failure rate", "control": spotcheck["control_mean"],
+                 "treatment": spotcheck["treatment_mean"], "lift_pct": spotcheck["lift_pct"],
+                 "ci_low_pct": spotcheck["ci_low_pct"], "ci_high_pct": spotcheck["ci_high_pct"],
+                 "p_value": spotcheck["p_value"], "method": "Welch (team level)", "guardrail": True}],
+            "business": {"impact_text": (f"Intervention-free completion moved {primary['lift_pct']:+.1f}% "
+                                        f"({primary['control_mean']:.3f} to {primary['treatment_mean']:.3f}), but the correction rate moved "
+                                        f"{correction['lift_pct']:+.1f}% and spot-check failures {spotcheck['lift_pct']:+.1f}%. "
+                                        "Those figures come from the generated data, not from the headline lift alone.")},
+            "followup_spec": {"post_col": "post_completion_share", "pre_col": "pre_completion_share",
+                              "base_col": "baseline_tasks", "unit_col": "team_id",
+                              "segment_col": "segment",
+                              "segment_labels": {"large": "large teams", "small": "small teams"}}}
+
+
+
 EXTRA_FLAGSHIPS = {
     "linkedin_creator_crowding_out": (generate_crowding_out, analyze_crowding_out),
     "meta_creator_recommendations": (generate_meta, analyze_meta),
@@ -1163,4 +1611,8 @@ EXTRA_FLAGSHIPS = {
     "switchback_sos_pricing": (generate_switchback_sos, analyze_switchback_sos),
     "switchback_surge": (generate_switchback_surge, analyze_switchback_surge),
     "switchback_batching": (generate_switchback_batching, analyze_switchback_batching),
+    "ai_team_coding_agent": (generate_ai_team_coding_agent, analyze_ai_team_coding_agent),
+    "ai_individual_model_upgrade": (generate_ai_individual_model_upgrade, analyze_ai_individual_model_upgrade),
+    "ai_app_model_swap": (generate_ai_app_model_swap, analyze_ai_app_model_swap),
+    "ai_cowork_delegation": (generate_ai_cowork_delegation, analyze_ai_cowork_delegation),
 }
