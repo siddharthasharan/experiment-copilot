@@ -38,6 +38,30 @@ _saved = []
 _orchestrator = None
 
 
+def _referrer_host(value):
+    """Host part of a Referer header only (e.g. linkedin.com), never the full URL."""
+    if not value:
+        return None
+    try:
+        return urlparse(value).netloc or None
+    except Exception:
+        return None
+
+
+def _log_event(event, session_id=None, scenario_id=None, referrer=None, verdict=None, detail=None):
+    """One anonymous JSON line per visitor action, printed to stdout so it
+    lands in Render Logs (Dashboard -> service -> Logs, search for "event").
+    Deliberately NOT logged: client IP, User-Agent, message text, full URLs
+    or query strings. A session id is a server-generated random id, not a
+    person, and referrer_host is only the source host (linkedin.com, github.com).
+    Nothing here is retroactive: logging starts when this code deploys."""
+    rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "event": event, "session_id": session_id, "scenario_id": scenario_id,
+           "referrer_host": _referrer_host(referrer), "verdict": verdict, "detail": detail}
+    rec = {k: v for k, v in rec.items() if v is not None}
+    print(json.dumps(rec), flush=True)
+
+
 def _load_examples():
     for cand in [os.path.join(ROOT, "docs", "scorecard_data.json"),
                  os.path.join(ROOT, "showroom", "scorecard_data.json")]:
@@ -110,9 +134,12 @@ def _run_thread(session):
                            "industry": cfg["industry"], "verdict": result["verdict"],
                            "primary_lift_pct": result["primary"]["lift_pct"],
                            "at": time.time()})
+        _log_event("run_done", session_id=session["id"], scenario_id=sid,
+                   verdict=result["verdict"])
     except Exception as e:  # surfaced honestly in the run panel
         with _lock:
             session["run"] = {"done": True, "stages": stages, "error": str(e)}
+        _log_event("run_failed", session_id=session["id"], scenario_id=sid)
 
 
 def _pdf_clean(text):
@@ -283,6 +310,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path, qs = parsed.path, parse_qs(parsed.query)
         if path in ("/", "/index.html"):
+            _log_event("page_load", referrer=self.headers.get("Referer"))
             with open(os.path.join(STATIC, "index.html"), "rb") as f:
                 return self._send_bytes(f.read(), "text/html")
         if path.startswith("/static/"):
@@ -333,6 +361,7 @@ class Handler(BaseHTTPRequestHandler):
             typ = qs.get("type", ["scorecard_json"])[0]
             if not s or not s.get("scorecard"):
                 return self._send_json({"error": "no scorecard yet"}, 404)
+            _log_event("download", session_id=s["id"], scenario_id=s.get("scenario_id"), detail=typ)
             sc = s["scorecard"]
             if typ == "scorecard_json":
                 return self._send_bytes(json.dumps(sc, indent=2).encode(), "application/json", "scorecard.json")
@@ -359,11 +388,14 @@ class Handler(BaseHTTPRequestHandler):
             s = _get_session(sid) if sid else _get_session(None)
             if sid is None:
                 # First call: return the welcome blocks already stored.
+                _log_event("session_start", session_id=s["id"])
                 return self._send_json({"session_id": s["id"], "blocks": s["messages"],
                                         "state": s["state"]})
             blocks = _orchestrator.handle(s, message=body.get("message", ""),
                                           action=body.get("action"),
                                           payload=body.get("payload"))
+            _log_event(body.get("action") or "chat_message", session_id=s["id"],
+                       scenario_id=s.get("scenario_id"))
             with _lock:
                 s["messages"].extend(blocks)
             out = {"session_id": s["id"], "blocks": blocks, "state": s["state"]}
@@ -382,6 +414,7 @@ class Handler(BaseHTTPRequestHandler):
                 s["run"] = {"done": False, "stages": [], "error": None}
                 s["state"] = "running"
             threading.Thread(target=_run_thread, args=(s,), daemon=True).start()
+            _log_event("run_started", session_id=s["id"], scenario_id=s.get("scenario_id"))
             return self._send_json({"started": True})
         if parsed.path == "/api/saved-load":
             with _lock:

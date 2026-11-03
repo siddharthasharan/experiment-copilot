@@ -96,8 +96,15 @@ function renderBlocks(blocks) {
     } else if (b.type === "guided_run") {
       const wrap = document.createElement("div");
       wrap.className = "config-card guided-run";
-      wrap.innerHTML = `<h3>${esc(b.title)}</h3><p>${esc(b.description)}</p><button class="btn" data-a="guided">Try a sample run</button>`;
-      wrap.querySelector('[data-a="guided"]').onclick = () => sendAction("guided_run", { scenario_id: b.scenario_id }, b.title);
+      const presets = (b.presets && b.presets.length)
+        ? b.presets
+        : [{ scenario_id: b.scenario_id, label: "Try a sample run" }];
+      const buttons = presets.map((p, i) =>
+        `<button class="btn secondary" data-p="${i}">${esc(p.label)}</button>`).join("");
+      wrap.innerHTML = `<h3>${esc(b.title)}</h3><p>${esc(b.description)}</p><div style="display:flex;flex-wrap:wrap;gap:8px">${buttons}</div>`;
+      presets.forEach((p, i) => {
+        wrap.querySelector(`[data-p="${i}"]`).onclick = () => sendAction("guided_run", { scenario_id: p.scenario_id }, p.label);
+      });
       $("messages").appendChild(wrap);
     } else if (b.type === "run_started") {
       // Guided run: the server has preset the scenario and config, so

@@ -166,14 +166,32 @@ def main():
     # Guided run: welcome block, preset action, scorecard match, normal flow intact.
     _wb = welcome_blocks()
     _gb = [b for b in _wb if b["type"] == "guided_run"]
-    check("welcome has guided-run block", len(_gb) == 1 and
-          _gb[0]["scenario_id"] == GUIDED_RUN_PRESET == "linkedin_creator_crowding_out")
+    check("welcome has guided-run block with 3 presets", len(_gb) == 1 and
+          _gb[0]["scenario_id"] == GUIDED_RUN_PRESET == "linkedin_creator_crowding_out" and
+          [p["scenario_id"] for p in _gb[0]["presets"]] ==
+          ["linkedin_creator_crowding_out", "switchback_sos_pricing", "ai_team_coding_agent"])
     _sg = new_session()
     _gblocks = orch.handle(_sg, action="guided_run", payload={})
     check("guided run presets crowding-out at seed 42",
           _sg["scenario_id"] == "linkedin_creator_crowding_out" and _sg["config"]["seed"] == 42 and
           _sg["state"] == "running" and any(b["type"] == "run_started" for b in _gblocks) and
           "Do Not Launch" in _gblocks[0]["text"] and "Which tier gained" in _gblocks[0]["text"])
+    _sg2 = new_session()
+    _g2 = orch.handle(_sg2, action="guided_run", payload={"scenario_id": "switchback_sos_pricing"})
+    check("guided run switchback preset at seed 42",
+          _sg2["scenario_id"] == "switchback_sos_pricing" and _sg2["config"]["seed"] == 42 and
+          _sg2["state"] == "running" and any(b["type"] == "run_started" for b in _g2) and
+          "washout" in _g2[0]["text"])
+    _sg3 = new_session()
+    _g3 = orch.handle(_sg3, action="guided_run", payload={"scenario_id": "ai_team_coding_agent"})
+    check("guided run coding-agent preset at seed 42",
+          _sg3["scenario_id"] == "ai_team_coding_agent" and _sg3["config"]["seed"] == 42 and
+          _sg3["state"] == "running" and any(b["type"] == "run_started" for b in _g3) and
+          "60" in _g3[0]["text"] and "cluster" in _g3[0]["text"])
+    _sg4 = new_session()
+    _g4 = orch.handle(_sg4, action="guided_run", payload={"scenario_id": "reddit_feed_ranking"})
+    check("guided run rejects non-preset scenario",
+          _sg4["state"] != "running" and not any(b["type"] == "run_started" for b in _g4))
     _df_g, _r_g = run_flagship("linkedin_creator_crowding_out", seed=42)
     _cfg_g = dict(_CFG["linkedin_creator_crowding_out"]); _cfg_g["seed"] = 42
     _trend_g = _r_g.pop("trend")
@@ -189,7 +207,7 @@ def main():
     check("normal industry -> scenario -> config after guided run",
           _sg["state"] == "config" and any(b["type"] == "config" for b in _blocks))
     _app_js = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "static", "app.js")).read()
-    check("frontend has guided-run button", "guided_run" in _app_js and "Try a sample run" in _app_js)
+    check("frontend has guided-run button", "guided_run" in _app_js and "Try a sample run" in _app_js and "presets" in _app_js)
     _df_u, _r_u = run_flagship("uber_driver_incentives", seed=42)
     _drv = followups.driver_availability(_df_u, _r_u, "uber_driver_incentives")
     check("uber driver utilization follow-up", _drv["supported"] and "utilization" in _drv["text"])
@@ -348,6 +366,17 @@ def main():
     check("social cards all runnable", len(_cards) == 5 and all(c["runnable"] for c in _cards))
     _blocks = orch.handle(_s2, action="scenario", payload={"scenario_id": "tiktok_notifications"})
     check("chat new scenario -> config card", any(b["type"] == "config" for b in _blocks) and _s2["state"] == "config")
+    import io as _io, json as _json, contextlib as _ctx
+    from copilot_platform.server import _log_event, _referrer_host
+    check("referrer host strips full url", _referrer_host("https://www.linkedin.com/posts/x?y=1") == "www.linkedin.com" and _referrer_host(None) is None)
+    _buf = _io.StringIO()
+    with _ctx.redirect_stdout(_buf):
+        _log_event("guided_run", session_id="sess-1", scenario_id="switchback_sos_pricing",
+                   referrer="https://www.linkedin.com/feed/", verdict="LAUNCH")
+    _rec = _json.loads(_buf.getvalue().strip())
+    check("event log is anonymous json", _rec["event"] == "guided_run" and _rec["session_id"] == "sess-1" and
+          _rec["scenario_id"] == "switchback_sos_pricing" and _rec["referrer_host"] == "www.linkedin.com" and
+          "linkedin.com/feed" not in _buf.getvalue() and "ip" not in _rec and "user_agent" not in _rec)
     print("All platform tests passed.")
 
 

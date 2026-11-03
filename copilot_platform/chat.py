@@ -34,6 +34,26 @@ class LLMAdapter:
 # sessions up, DONT_LAUNCH — so a first-time visitor sees what a
 # verdict that says no looks like.
 GUIDED_RUN_PRESET = "linkedin_creator_crowding_out"
+# The three visitor-pickable guided runs: one judgment story (a rising total
+# that still should not launch), one switchback story (region x window), and
+# one AI Labs story (cluster-randomized teams). Each runs at fixed seed 42 so
+# every guided run is a known-good story, never a random draw.
+GUIDED_RUN_PRESETS = [
+    {"scenario_id": "linkedin_creator_crowding_out",
+     "label": "Crowding-out: small creators lose share",
+     "guidance": "1. The headline: small-creator share falls while total creator sessions rise — and the verdict is Do Not Launch. A rising total can still be the wrong launch.\n"
+                 "2. Then ask 'Which tier gained the most?' — the top tier absorbed the gain, which is what proves the crowding-out story."},
+    {"scenario_id": "switchback_sos_pricing",
+     "label": "Switchback: SOS pricing",
+     "guidance": "1. The headline: on-time delivery rate rises and the verdict is Launch. This is a switchback, so the unit is zone x time window, not users.\n"
+                 "2. Then look at the washout: the first window after each switch is excluded, and the scorecard shows the washout-included sensitivity too, so you can see what that exclusion costs."},
+    {"scenario_id": "ai_team_coding_agent",
+     "label": "AI Labs: team coding-agent rollout",
+     "guidance": "1. The headline: PR cycle time improves and the verdict is Launch. Note the unit: 60 randomized teams (clusters), not 1,095 independent developers — teammates share repos, so the inference is cluster-robust.\n"
+                 "2. Then check the guardrails: code churn and security findings, and remember acceptance rate is descriptive only here, since high acceptance can mean over-reliance."},
+]
+GUIDED_RUN_PRESET_IDS = [p["scenario_id"] for p in GUIDED_RUN_PRESETS]
+GUIDED_RUN_GUIDANCE = {p["scenario_id"]: p["guidance"] for p in GUIDED_RUN_PRESETS}
 
 
 def new_session():
@@ -61,8 +81,10 @@ def welcome_blocks():
         # same 7 stages as a normal run and opens its scorecard.
         {"type": "guided_run", "scenario_id": GUIDED_RUN_PRESET,
          "title": "Try a sample run",
-         "description": "New here? Run one preset experiment end-to-end — the LinkedIn creator "
-                        "crowding-out scenario — and see a full scorecard. No setup, no choices to make first."},
+         "description": "New here? Pick one of three sample runs and see a full scorecard end-to-end. "
+                        "No setup, no choices to make first.",
+         "presets": [{"scenario_id": p["scenario_id"], "label": p["label"]}
+                     for p in GUIDED_RUN_PRESETS]},
         _chips(["Explore the 14 example scenarios"]),
     ]
 
@@ -141,17 +163,15 @@ class Orchestrator:
         if action == "guided_run":
             sid = payload.get("scenario_id") or GUIDED_RUN_PRESET
             cfg = FLAGSHIP_CONFIGS.get(sid)
-            if not cfg:
-                return [_text("That sample run is not available. Pick an industry card instead.")]
+            if not cfg or sid not in GUIDED_RUN_PRESET_IDS:
+                return [_text("That sample run is not one of the three presets. Pick one of the three sample runs on the welcome screen, or pick an industry card instead.")]
             session["industry"] = cfg["industry"]
             session["scenario_id"] = sid
             session["config"] = dict(cfg)
             session["config"]["seed"] = 42
             session["state"] = "running"
-            return [_text("Guided run — LinkedIn creator crowding-out, seed 42, running now through the same 7 stages as any experiment.\n\n"
-                          "What to look at when it lands:\n"
-                          "1. The headline: small-creator share falls while total creator sessions rise — and the verdict is Do Not Launch. A rising total can still be the wrong launch.\n"
-                          "2. Then ask 'Which tier gained the most?' — the top tier absorbed the gain, which is what proves the crowding-out story.\n\n"
+            return [_text(f"Guided run — {cfg['title']}, seed 42, running now through the same 7 stages as any experiment.\n\n"
+                          f"What to look at when it lands:\n{GUIDED_RUN_GUIDANCE[sid]}\n\n"
                           "After this run, tap 'New experiment' to start your own."),
                     {"type": "run_started", "scenario_id": sid}]
         if action == "industry":
