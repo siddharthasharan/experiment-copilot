@@ -38,6 +38,32 @@ _saved = []
 _orchestrator = None
 
 
+SHELL_CORS_ORIGINS = ("https://socialpulse-nlq.onrender.com",)
+
+
+def _cors_origin(request_origin):
+    """Origin to echo for the unified shell, or None if not allowed.
+
+    Allowlist is deliberately narrow: the SocialPulse Render origin
+    (which serves /shell) plus localhost/127.0.0.1 on any port for local
+    testing. Nothing else gets an Access-Control-Allow-Origin header,
+    so a browser will refuse the response for any other origin. This
+    does not authenticate anything — the Copilot APIs are public demo
+    endpoints — it only lets the shell's browser fetch them cross-origin.
+    """
+    if not request_origin:
+        return None
+    if request_origin in SHELL_CORS_ORIGINS:
+        return request_origin
+    try:
+        host = urlparse(request_origin).netloc
+    except Exception:
+        return None
+    if host.startswith("localhost:") or host.startswith("127.0.0.1:"):
+        return request_origin
+    return None
+
+
 def _referrer_host(value):
     """Host part of a Referer header only (e.g. linkedin.com), never the full URL."""
     if not value:
@@ -286,9 +312,26 @@ class Handler(BaseHTTPRequestHandler):
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        allowed = _cors_origin(self.headers.get("Origin"))
+        if allowed:
+            self.send_header("Access-Control-Allow-Origin", allowed)
+            self.send_header("Vary", "Origin")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self):  # noqa: N802
+        # Preflight for the shell's cross-origin JSON POSTs (Content-Type:
+        # application/json). Same narrow allowlist as _cors_origin.
+        allowed = _cors_origin(self.headers.get("Origin"))
+        self.send_response(204)
+        if allowed:
+            self.send_header("Access-Control-Allow-Origin", allowed)
+            self.send_header("Vary", "Origin")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def _send_bytes(self, body, ctype, filename=None):
         self.send_response(200)
